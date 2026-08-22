@@ -27,16 +27,25 @@ public class TrackGenerator : MonoBehaviour
     [Header("Obstacles")]
     public bool spawnObstacles = true;
     public float firstObstacleAt = 130f;
-    public float obstacleSpacingStart = 60f;
-    public float obstacleSpacingMin = 24f;
+    public float obstacleSpacingStart = 52f;
+    public float obstacleSpacingMin = 21f;
     public float nearMissRange = 2.6f;
+
+    [Header("Grass")]
+    public bool spawnGrass = true;
+    [Tooltip("Length of road each baked grass patch covers.")]
+    public float grassPatchLength = 8f;
+    [Tooltip("Blades per patch, per side of the road.")]
+    public int grassBladesPerPatch = 200;
+    [Tooltip("How far out from the tarmac the grass reaches.")]
+    public float grassReach = 60f;
 
     [Header("Trees")]
     public bool spawnTrees = true;
-    public float treeSpacing = 3.5f;
+    public float treeSpacing = 1.5f;
     public float treeMinFromRoad = 2.5f;
-    public float treeMaxFromRoad = 32f;
-    [Range(0f, 1f)] public float treeDensity = 0.95f;
+    public float treeMaxFromRoad = 42f;
+    [Range(0f, 1f)] public float treeDensity = 1f;
     public float treeHeightMin = 5.5f;
     public float treeHeightMax = 10.5f;
 
@@ -79,6 +88,17 @@ public class TrackGenerator : MonoBehaviour
     public void RequestStraightFor(float meters)
     {
         straightUntil = frontDistance + meters;
+    }
+
+    float flatUntil = -1f;
+
+    /// <summary>
+    /// Holds the road level for a stretch. Used between biomes so a climb
+    /// never begins in the middle of something built for flat ground.
+    /// </summary>
+    public void RequestFlatFor(float meters)
+    {
+        flatUntil = frontDistance + meters;
     }
 
     /// <summary>
@@ -209,6 +229,7 @@ public class TrackGenerator : MonoBehaviour
 
     struct Sample
     {
+        public float dist;          // metres along the track
         public Vector3 pos;
         public float headingDeg;
         public float curvature; // signed, degrees per meter (positive = right turn)
@@ -276,10 +297,27 @@ public class TrackGenerator : MonoBehaviour
     public Color rockColor = new Color(0.33f, 0.32f, 0.36f);
     [Tooltip("Steepest climb/descent, in metres per metre.")]
     public float maxSlope = 0.055f;
+    [Tooltip("Keeps the road dead level. Races use this: on a climbing road " +
+             "a rival far up the track sits visibly higher than the player, " +
+             "which reads as cars floating in the air.")]
+    public bool flatTrack;
     [Tooltip("How far the road runs before the gradient changes.")]
     public Vector2 slopeSegmentLength = new Vector2(120f, 240f);
 
     [Range(0f, 1f)] public float snowBlend;
+    [Tooltip("1 = above the clouds: gold and marble, no hazards.")]
+    [Range(0f, 1f)] public float heavenBlend;
+    [Tooltip("Metres of steep descent still owed - used to drop back to earth.")]
+    public float descendMeters;
+
+    public Color heavenRoadColor = new Color(0.92f, 0.86f, 0.66f);
+    public Color heavenGroundColor = new Color(0.97f, 0.97f, 1f);
+
+    public void SetHeavenBlend(float t)
+    {
+        heavenBlend = Mathf.Clamp01(t);
+        RefreshBiomeMaterials();
+    }
     float currentSlope, targetSlope, slopeRemaining, elevation;
 
     [Header("Night city look")]
@@ -297,12 +335,22 @@ public class TrackGenerator : MonoBehaviour
 
     // ------------------------------------------------------------------ setup
 
-    public void Init(Vector3 origin, float startHeadingDeg)
+    /// <summary>
+    /// Builds a fresh track. The biome must be supplied here rather than set
+    /// afterwards: Init generates the opening stretch before it returns, so
+    /// anything applied later arrives too late for that scenery. Endless runs
+    /// leave the defaults and start in daylight forest.
+    /// </summary>
+    public void Init(Vector3 origin, float startHeadingDeg,
+                     float dayNightBlend = 0f, float snowAmount = 0f)
     {
         Clear();
-        biome = Biome.NightCity; // force the reset below to actually apply
         CreateMaterials();
-        SetBiome(Biome.Forest);  // every run starts in daylight
+        biomeBlend = Mathf.Clamp01(dayNightBlend);
+        snowBlend = Mathf.Clamp01(snowAmount);
+        biome = biomeBlend >= 0.5f ? Biome.NightCity
+              : snowBlend >= 0.5f ? Biome.SnowMountains : Biome.Forest;
+        RefreshBiomeMaterials();
         LoadNaturePrefabs();
 
         baseDistance = 0f;
@@ -315,7 +363,6 @@ public class TrackGenerator : MonoBehaviour
         currentSlope = targetSlope = 0f;
         slopeRemaining = 200f;
         elevation = 0f;
-        snowBlend = 0f;
         segmentRemaining = roadBehindStart + firstObstacleAt * 0.8f;
         segmentCurvature = 0f;
         lastWasCorner = false;
@@ -324,6 +371,7 @@ public class TrackGenerator : MonoBehaviour
         nextObstacleDistance = roadBehindStart + firstObstacleAt;
         nextPostDistance = 0f;
         nextTreeDistance = 10f;
+        nextGrassDistance = 0f;
         nextCloudDistance = 0f;
         nextCoinRunDistance = roadBehindStart + 60f;
         nextTrafficDistance = roadBehindStart + trafficStartAt;
@@ -333,7 +381,7 @@ public class TrackGenerator : MonoBehaviour
         boostPads.Clear();
         postFlip = 0;
 
-        samples.Add(new Sample { pos = frontPos, headingDeg = headingDeg, curvature = 0f });
+        samples.Add(new Sample { dist = frontDistance, pos = frontPos, headingDeg = headingDeg, curvature = 0f });
         StartNewChunk(0f);
 
         if (createGround)
@@ -361,6 +409,7 @@ public class TrackGenerator : MonoBehaviour
         obstacles.Clear();
         chunks.Clear();
         decorations.Clear();
+        decoGrid.Clear();
         coins.Clear();
         traffic.Clear();
         powerUps.Clear();
@@ -443,7 +492,13 @@ public class TrackGenerator : MonoBehaviour
             Vector3 p = SamplePosition(carDistance);
             // the road climbs and dives in the mountains, so the flat world
             // plane has to sit well below the lowest point it can reach
-            float drop = Mathf.Lerp(0.06f, 120f, snowBlend);
+            // While the road is dropping, everything ahead of the car is lower
+            // than the car is - so a plane sitting just under the wheels rises
+            // straight through the road in front and hides it. It has to stay
+            // below the lowest point in view.
+            float drop = Mathf.Lerp(0.5f, 120f, snowBlend);
+            if (currentSlope < -0.004f) drop = Mathf.Max(drop, 45f);
+            if (elevation > 2f) drop = Mathf.Max(drop, elevation + 25f);
             ground.transform.position = new Vector3(p.x, p.y - drop, p.z);
         }
     }
@@ -458,9 +513,36 @@ public class TrackGenerator : MonoBehaviour
         if (slopeRemaining <= 0f)
         {
             slopeRemaining = Random.Range(slopeSegmentLength.x, slopeSegmentLength.y);
-            targetSlope = snowBlend > 0.05f
-                ? Random.Range(-maxSlope, maxSlope) * snowBlend
-                : 0f;
+            // The mountain is a CLIMB. Every stretch goes up; the only variety
+            // is how steeply, with the occasional near-flat shelf to breathe.
+            // Races stay level - see flatTrack.
+            if (flatTrack || frontDistance < flatUntil)
+            {
+                targetSlope = 0f;
+            }
+            else if (snowBlend > 0.05f)
+            {
+                // a real pass climbs steadily rather than in the odd ramp -
+                // and the steeper it climbs, the further apart its loops sit
+                targetSlope = Mathf.Lerp(maxSlope * 0.55f, maxSlope, Random.value) * snowBlend;
+            }
+            else if (elevation > 1f)
+            {
+                // Off the mountain, the road works its way back down to the
+                // height everything else is built at. Left up in the air, the
+                // next lap of biomes generates around a road that is fifty
+                // metres above the world and the two tangle together.
+                targetSlope = -maxSlope;
+            }
+            else
+            {
+                targetSlope = 0f;
+            }
+        }
+        if (descendMeters > 0f)
+        {
+            descendMeters -= SampleSpacing;
+            targetSlope = -maxSlope * 2.2f;      // the fall back to earth
         }
         currentSlope = Mathf.MoveTowards(currentSlope, targetSlope, 0.0022f * SampleSpacing);
         elevation += currentSlope * SampleSpacing;
@@ -469,10 +551,12 @@ public class TrackGenerator : MonoBehaviour
         Vector3 step = Quaternion.Euler(0f, headingDeg, 0f) * Vector3.forward * SampleSpacing;
         step.y = currentSlope * SampleSpacing;
         frontPos += step;
+        ClearDecorationsAt(frontPos);
         frontDistance += SampleSpacing;
         segmentRemaining -= SampleSpacing;
 
-        samples.Add(new Sample { pos = frontPos, headingDeg = headingDeg, curvature = segmentCurvature });
+        samples.Add(new Sample { dist = frontDistance, pos = frontPos,
+                                 headingDeg = headingDeg, curvature = segmentCurvature });
 
         SpawnPropsUpTo(frontDistance);
 
@@ -506,7 +590,19 @@ public class TrackGenerator : MonoBehaviour
         else
         {
             int dir = Random.value < 0.7f ? -lastCornerDir : lastCornerDir;
-            float radius = Mathf.Lerp(58f, 26f, t) * Random.Range(0.8f, 1.25f);
+
+            // On the mountain the road is a pass winding COUNTERCLOCKWISE up
+            // and around it, so nearly every corner turns left. The mountain
+            // stays on the inside of the turn and the drop on the outside.
+            bool mountain = snowBlend > 0.5f;
+            if (mountain && Random.value < 0.85f) dir = MountainTurnDir;
+
+            // Wide sweeps up there. A tight helix wraps back over itself
+            // within sight, and the player ends up driving under the loop
+            // they were on a moment ago.
+            float radius = mountain
+                ? Random.Range(150f, 260f)
+                : Mathf.Lerp(58f, 26f, t) * Random.Range(0.8f, 1.25f);
             float angle = Random.Range(Mathf.Lerp(30f, 45f, t), Mathf.Lerp(60f, 110f, t));
 
             segmentCurvature = dir * Mathf.Rad2Deg / radius;
@@ -540,12 +636,28 @@ public class TrackGenerator : MonoBehaviour
             {
                 // during a blend, each slot rolls for the new biome, so the
                 // change reads as scenery mixing rather than switching
-                if (Random.value < snowBlend) SpawnSnowSceneryAt(nextTreeDistance);
-                else if (Random.value < biomeBlend) SpawnCityAt(nextTreeDistance);
+                // Snow wins outright rather than rolling against the city
+                // blend: the mountains keep biomeBlend at 1, so rolling would
+                // scatter tower blocks all the way up the pass.
+                // Each biome owns its stretch outright. Rolling dice against
+                // the blend used to leave skyscrapers standing in meadows for
+                // the whole length of a transition.
+                if (snowBlend > 0.15f) SpawnSnowSceneryAt(nextTreeDistance);
+                else if (biomeBlend > 0.8f) SpawnCityAt(nextTreeDistance);
                 else SpawnTreesAt(nextTreeDistance);
                 float spacing = Mathf.Lerp(treeSpacing, treeSpacing * 3.2f, biomeBlend);
                 spacing = Mathf.Lerp(spacing, treeSpacing * 1.6f, snowBlend);
                 nextTreeDistance += spacing * Random.Range(0.6f, 1.5f);
+            }
+        }
+
+        // grass along the verges, baked a patch at a time
+        if (spawnGrass)
+        {
+            while (nextGrassDistance <= dist - TreeLagBehindFront)
+            {
+                BuildGrassPatch(nextGrassDistance, grassPatchLength);
+                nextGrassDistance += grassPatchLength;
             }
         }
 
@@ -966,7 +1078,9 @@ public class TrackGenerator : MonoBehaviour
     // --- the light tree hanging under the start gantry
     readonly List<Renderer> startLights = new List<Renderer>();
     Material lightOffMat, lightRedMat, lightGreenMat;
-    const int StartLightCount = 5;
+    // a drag-strip tree: three rows of red counting down, then green
+    const int StartLightRows = 4;
+    const int BulbsPerRow = 6;
 
     void BuildStartLights(float dist, Transform parent)
     {
@@ -984,18 +1098,32 @@ public class TrackGenerator : MonoBehaviour
             lightGreenMat = MakeGlowMaterial(sh, new Color(0.25f, 1f, 0.35f));
         }
 
-        // a dark backing board so the bulbs read against the sky
-        Vector3 boardPos = pos + Vector3.up * 5.1f;
-        MakePart(PrimitiveType.Cube, parent, lightOffMat, boardPos, along,
-            new Vector3(StartLightCount * 1.25f + 0.5f, 1.5f, 0.25f));
+        // Bolted flat to the face of the gate the driver actually sees, just
+        // under the overhead beam and overlapping it slightly so it reads as
+        // hung from it. The gate's own banner sits at -0.32, so the board and
+        // its bulbs stand proud of that.
+        const float RowGap = 0.62f;
+        const float ColGap = 0.60f;
+        float boardW = BulbsPerRow * ColGap + 0.4f;
+        float boardH = StartLightRows * RowGap + 0.4f;
 
-        for (int i = 0; i < StartLightCount; i++)
+        Vector3 boardPos = pos + Vector3.up * 5.15f + fwd * -0.46f;
+        MakePart(PrimitiveType.Cube, parent, lightOffMat, boardPos, along,
+            new Vector3(boardW, boardH, 0.18f));
+
+        // Rows top to bottom: three, two, one, go. Index order matters -
+        // SetStartLights lights whole rows from the top down.
+        for (int row = 0; row < StartLightRows; row++)
         {
-            float x = (i - (StartLightCount - 1) * 0.5f) * 1.25f;
-            GameObject bulb = MakePart(PrimitiveType.Sphere, parent, lightOffMat,
-                boardPos + right * x + fwd * -0.2f, along,
-                new Vector3(0.95f, 0.95f, 0.55f));
-            startLights.Add(bulb.GetComponent<Renderer>());
+            float y = ((StartLightRows - 1) * 0.5f - row) * RowGap;
+            for (int col = 0; col < BulbsPerRow; col++)
+            {
+                float x = (col - (BulbsPerRow - 1) * 0.5f) * ColGap;
+                GameObject bulb = MakePart(PrimitiveType.Sphere, parent, lightOffMat,
+                    boardPos + right * x + Vector3.up * y + fwd * -0.14f, along,
+                    new Vector3(0.46f, 0.46f, 0.28f));
+                startLights.Add(bulb.GetComponent<Renderer>());
+            }
         }
     }
 
@@ -1011,17 +1139,22 @@ public class TrackGenerator : MonoBehaviour
     }
 
     /// <summary>
-    /// Lights the tree: <paramref name="lit"/> bulbs on in red as the count
-    /// runs down, or all of them green when the race is away.
+    /// Lights the tree a row at a time. <paramref name="litRows"/> is how many
+    /// of the three red rows are on, counting from the top; green lights the
+    /// bottom row instead and drops the reds, the way a real tree does.
     /// </summary>
-    public void SetStartLights(int lit, bool green)
+    public void SetStartLights(int litRows, bool green)
     {
         for (int i = 0; i < startLights.Count; i++)
         {
             if (startLights[i] == null) continue;
-            Material m = green ? lightGreenMat
-                       : i < lit ? lightRedMat
-                       : lightOffMat;
+            int row = i / BulbsPerRow;
+            bool isGoRow = row == StartLightRows - 1;
+
+            Material m = lightOffMat;
+            if (green) m = isGoRow ? lightGreenMat : lightOffMat;
+            else if (!isGoRow && row < litRows) m = lightRedMat;
+
             startLights[i].sharedMaterial = m;
         }
     }
@@ -1115,9 +1248,23 @@ public class TrackGenerator : MonoBehaviour
                 for (int i = 1; i < rends.Length; i++) b.Encapsulate(rends[i].bounds);
                 float maxDim = Mathf.Max(b.size.x, b.size.y, b.size.z, 0.001f);
                 float k = 1.1f / maxDim;
-                model.transform.localScale = model.transform.localScale * k;
+                Vector3 s0 = model.transform.localScale;
+                Vector3 sc = s0 * k;
+
+                // Fatten the tyre along its axle. Scaled evenly it reads as a
+                // disc on edge from the driver's view; a chunkier one looks
+                // like something worth picking up.
+                if (b.size.x <= b.size.y && b.size.x <= b.size.z) sc.x *= 1.7f;
+                else if (b.size.y <= b.size.x && b.size.y <= b.size.z) sc.y *= 1.7f;
+                else sc.z *= 1.7f;
+                model.transform.localScale = sc;
+
+                // centring has to follow the per-axis scale, not the flat one
                 Vector3 centerLocal = root.transform.InverseTransformPoint(b.center);
-                model.transform.localPosition = -centerLocal * k;
+                model.transform.localPosition = new Vector3(
+                    -centerLocal.x * sc.x / Mathf.Max(s0.x, 0.0001f),
+                    -centerLocal.y * sc.y / Mathf.Max(s0.y, 0.0001f),
+                    -centerLocal.z * sc.z / Mathf.Max(s0.z, 0.0001f));
                 // stand upright: thinnest axis across the road
                 if (b.size.y <= b.size.x && b.size.y <= b.size.z)
                     model.transform.localRotation = model.transform.localRotation * Quaternion.Euler(0f, 0f, 90f);
@@ -1347,7 +1494,7 @@ public class TrackGenerator : MonoBehaviour
         }
 
         // linger a while behind the car - big shapes vanishing early is jarring
-        decorations.Add(new Chunk { endDistance = dist + 70f, go = cloud });
+        AddDecoration(dist + 70f, cloud);
     }
 
     void SpawnPostPair(float dist)
@@ -1396,6 +1543,28 @@ public class TrackGenerator : MonoBehaviour
     public void SetSnowBlend(float t)
     {
         snowBlend = Mathf.Clamp01(t);
+
+        // the profile starts and stops at fixed points on the road, a little
+        // way ahead of whatever has already been built
+        if (snowBlend > 0.15f)
+        {
+            if (passStartDistance < 0f)
+            {
+                passStartDistance = frontDistance + 30f;
+                passEndDistance = -1f;
+            }
+        }
+        else if (passStartDistance >= 0f && passEndDistance < 0f)
+        {
+            passEndDistance = frontDistance + 30f;
+        }
+        else if (snowBlend < 0.02f && passEndDistance >= 0f
+                 && frontDistance > passEndDistance + PassRampMeters)
+        {
+            passStartDistance = -1f;   // fully back off the mountain
+            passEndDistance = -1f;
+        }
+
         RefreshBiomeMaterials();
     }
 
@@ -1405,8 +1574,10 @@ public class TrackGenerator : MonoBehaviour
 
         Color road = Color.Lerp(roadColor, cityRoadColor, biomeBlend);
         Color ground = Color.Lerp(groundColor, cityGroundColor, biomeBlend);
-        roadMat.color = Color.Lerp(road, snowRoadColor, snowBlend);
-        groundMat.color = Color.Lerp(ground, snowGroundColor, snowBlend);
+        roadMat.color = Color.Lerp(Color.Lerp(road, snowRoadColor, snowBlend),
+                                   heavenRoadColor, heavenBlend);
+        groundMat.color = Color.Lerp(Color.Lerp(ground, snowGroundColor, snowBlend),
+                                     heavenGroundColor, heavenBlend);
         if (roadMat.HasProperty("_Smoothness"))
         {
             float s = Mathf.Lerp(0.2f, 0.6f, biomeBlend);
@@ -1503,7 +1674,7 @@ public class TrackGenerator : MonoBehaviour
                 new Vector3(w * 0.75f, 2.2f, 0.25f));
         }
 
-        decorations.Add(new Chunk { endDistance = dist, go = b });
+        AddDecoration(dist, b);
     }
 
     void SpawnStreetLamp(float dist, Vector3 pos, Vector3 right, int side, float offset)
@@ -1522,46 +1693,285 @@ public class TrackGenerator : MonoBehaviour
             basePos + Vector3.up * 5.7f - right * (side * 1.35f), Quaternion.identity,
             new Vector3(0.7f, 0.18f, 0.5f));
 
-        decorations.Add(new Chunk { endDistance = dist, go = lamp });
+        AddDecoration(dist, lamp);
     }
 
     // ------------------------------------------------------ snow mountains
 
+    /// <summary>
+    /// The snow biome, laid out exactly like the forest - the same five rows
+    /// at the same odds - only built from the pack's snowy models.
+    /// </summary>
     void SpawnSnowSceneryAt(float dist)
     {
         SamplePose(dist, out Vector3 pos, out Vector3 fwd, out _);
         Vector3 right = Vector3.Cross(Vector3.up, fwd).normalized;
+
+        float half = roadWidth * 0.5f;
+        float midBand = treeMinFromRoad + (treeMaxFromRoad - treeMinFromRoad) * 0.4f;
+
+        // The rock wall and the drop are part of the ground mesh now, so all
+        // that is left out here is what grows on them.
+        for (int side = -1; side <= 1; side += 2)
+        {
+            // the mountain side: trees thin out as the bank gets steeper
+            if (side == MountainSide)
+            {
+                if (Random.value < 0.55f)
+                {
+                    SpawnOneSnowTree(dist, pos, right, side,
+                        half + Random.Range(treeMinFromRoad, midBand));
+                }
+                if (Random.value < 0.35f)
+                {
+                    SpawnOneSnowTree(dist, pos, right, side,
+                        half + Random.Range(midBand, treeMaxFromRoad * 0.7f));
+                }
+                // boulders sitting against the foot of the bank
+                if (Random.value < 0.3f)
+                {
+                    SpawnOneSnowTree(dist, pos, right, side,
+                        half + Random.Range(1.5f, 5f));
+                }
+                continue;
+            }
+
+            if (Random.value > treeDensity) continue;
+
+            SpawnOneSnowTree(dist, pos, right, side,
+                half + Random.Range(treeMinFromRoad, midBand));
+
+            // Only the near bands on the mountain: deep rows of trees would
+            // march off the edge of the pass and hang in mid air over the
+            // valley, or bury the cliff faces.
+            if (Random.value < 0.9f)
+            {
+                SpawnOneSnowTree(dist, pos, right, side,
+                    half + Random.Range(midBand, treeMaxFromRoad * 0.6f));
+            }
+            if (Random.value < 0.5f)
+            {
+                SpawnOneSnowTree(dist, pos, right, side,
+                    half + Random.Range(treeMaxFromRoad * 0.6f, treeMaxFromRoad));
+            }
+        }
+    }
+
+    // ------------------------------------------------------------- heaven
+
+    Material goldMat, marbleMat;
+
+    void EnsureHeavenMaterials()
+    {
+        if (goldMat != null) return;
+        Shader sh = Shader.Find("Universal Render Pipeline/Lit");
+        if (sh == null) sh = Shader.Find("Standard");
+
+        goldMat = new Material(sh) { color = new Color(0.95f, 0.78f, 0.28f) };
+        if (goldMat.HasProperty("_Smoothness")) goldMat.SetFloat("_Smoothness", 0.85f);
+        if (goldMat.HasProperty("_Metallic")) goldMat.SetFloat("_Metallic", 0.9f);
+        if (goldMat.HasProperty("_EmissionColor"))
+        {
+            goldMat.EnableKeyword("_EMISSION");
+            goldMat.SetColor("_EmissionColor", new Color(0.35f, 0.26f, 0.05f));
+        }
+
+        marbleMat = new Material(sh) { color = new Color(0.97f, 0.96f, 0.93f) };
+        if (marbleMat.HasProperty("_Smoothness")) marbleMat.SetFloat("_Smoothness", 0.6f);
+    }
+
+    /// <summary>
+    /// The golden gate at the summit: a great arch spanning the road that the
+    /// player drives through on the way into the clouds.
+    /// </summary>
+    public void BuildHeavenGate(float dist)
+    {
+        EnsureHeavenMaterials();
+        SamplePose(dist, out Vector3 pos, out Vector3 fwd, out _);
+        Vector3 right = Vector3.Cross(Vector3.up, fwd).normalized;
+        Quaternion along = Quaternion.LookRotation(fwd, Vector3.up);
+
+        var root = new GameObject("HeavenGate");
+        root.transform.SetParent(transform, false);
+
+        float half = roadWidth * 0.5f + 2.2f;
+        const float PillarH = 15f;
+
+        for (int side = -1; side <= 1; side += 2)
+        {
+            Vector3 basePos = pos + right * (half * side);
+            // fluted column
+            MakePart(PrimitiveType.Cylinder, root.transform, marbleMat,
+                basePos + Vector3.up * (PillarH * 0.5f), along,
+                new Vector3(1.5f, PillarH * 0.5f, 1.5f));
+            // gold base and capital
+            MakePart(PrimitiveType.Cube, root.transform, goldMat,
+                basePos + Vector3.up * 0.6f, along, new Vector3(4f, 1.2f, 4f));
+            MakePart(PrimitiveType.Cube, root.transform, goldMat,
+                basePos + Vector3.up * (PillarH - 0.5f), along, new Vector3(4.4f, 1.4f, 4.4f));
+            // a statue standing on top of each pillar
+            BuildStatue(root.transform, basePos + Vector3.up * (PillarH + 0.2f), along, 4.5f);
+        }
+
+        // the arch itself: stepped gold blocks bridging the two pillars
+        for (int i = 0; i < 5; i++)
+        {
+            float t = i / 4f;
+            float y = PillarH + 1.6f + Mathf.Sin(t * Mathf.PI) * 2.6f;
+            float w = Mathf.Lerp(half * 2f + 4f, half * 2f + 4f, 1f) * (1f - 0.12f * i);
+            MakePart(PrimitiveType.Cube, root.transform, goldMat,
+                pos + Vector3.up * y, along, new Vector3(w, 1.1f, 2.4f - i * 0.25f));
+        }
+
+        // glowing threshold across the road
+        MakePart(PrimitiveType.Cube, root.transform, goldMat,
+            pos + Vector3.up * 0.06f, along, new Vector3(roadWidth, 0.08f, 1.4f));
+
+        AddDecoration(dist + 400f, root);
+    }
+
+    /// <summary>A simple robed figure - reads as a statue at speed.</summary>
+    void BuildStatue(Transform parent, Vector3 at, Quaternion along, float height)
+    {
+        EnsureHeavenMaterials();
+        float s = height / 4.5f;
+
+        MakePart(PrimitiveType.Cube, parent, marbleMat,
+            at + Vector3.up * (0.35f * s), along, new Vector3(2.2f * s, 0.7f * s, 2.2f * s));
+        MakePart(PrimitiveType.Cylinder, parent, goldMat,
+            at + Vector3.up * (1.9f * s), along, new Vector3(1.1f * s, 1.2f * s, 1.1f * s));
+        MakePart(PrimitiveType.Sphere, parent, goldMat,
+            at + Vector3.up * (3.4f * s), along, Vector3.one * 0.9f * s);
+        // outstretched arms
+        MakePart(PrimitiveType.Cube, parent, goldMat,
+            at + Vector3.up * (2.7f * s), along * Quaternion.Euler(0f, 0f, 18f),
+            new Vector3(3.2f * s, 0.28f * s, 0.28f * s));
+    }
+
+    /// <summary>
+    /// Temples, colonnades and statues floating in the cloud tops. The heaven
+    /// biome is shelved for now - nothing calls this, or BuildHeavenGate, but
+    /// both are left here so it can be switched back on later.
+    /// </summary>
+    void SpawnHeavenAt(float dist)
+    {
+        EnsureHeavenMaterials();
+        SamplePose(dist, out Vector3 pos, out Vector3 fwd, out _);
+        Vector3 right = Vector3.Cross(Vector3.up, fwd).normalized;
+        Quaternion along = Quaternion.LookRotation(fwd, Vector3.up);
         float half = roadWidth * 0.5f;
 
         for (int side = -1; side <= 1; side += 2)
         {
-            if (Random.value > treeDensity) continue;
+            if (Random.value > 0.75f) continue;
 
-            float offset = half + Random.Range(treeMinFromRoad, treeMaxFromRoad);
-            Vector3 spot = pos + right * (offset * side)
-                + Quaternion.Euler(0f, Random.Range(0f, 360f), 0f) * Vector3.forward * Random.Range(0f, 2.5f);
-            if (!AreaClearOfRoad(spot, half + 2f)) continue;
+            float outward = half + Random.Range(5f, 26f);
+            Vector3 spot = pos + right * (outward * side);
+            if (!RoadClear3D(spot, half + 4f, 14f)) continue;
 
-            LoadNaturePrefabs();
+            var root = new GameObject("HeavenProp");
+            root.transform.SetParent(transform, false);
+
             float roll = Random.value;
+            if (roll < 0.42f)
+            {
+                // colonnade: a row of marble columns on a gold plinth
+                int cols = Random.Range(3, 6);
+                float h = Random.Range(6f, 12f);
+                MakePart(PrimitiveType.Cube, root.transform, goldMat,
+                    spot + Vector3.up * 0.4f, along,
+                    new Vector3(3.4f, 0.8f, cols * 2.4f));
+                for (int i = 0; i < cols; i++)
+                {
+                    Vector3 c = spot + fwd * ((i - (cols - 1) * 0.5f) * 2.4f);
+                    MakePart(PrimitiveType.Cylinder, root.transform, marbleMat,
+                        c + Vector3.up * (h * 0.5f + 0.8f), along,
+                        new Vector3(0.75f, h * 0.5f, 0.75f));
+                }
+                MakePart(PrimitiveType.Cube, root.transform, goldMat,
+                    spot + Vector3.up * (h + 1.4f), along,
+                    new Vector3(3.8f, 1f, cols * 2.4f + 1f));
+            }
+            else if (roll < 0.72f)
+            {
+                // a statue on a tall plinth
+                float ph = Random.Range(3f, 9f);
+                MakePart(PrimitiveType.Cube, root.transform, marbleMat,
+                    spot + Vector3.up * (ph * 0.5f), along,
+                    new Vector3(2.6f, ph, 2.6f));
+                BuildStatue(root.transform, spot + Vector3.up * ph, along,
+                    Random.Range(4f, 7f));
+            }
+            else
+            {
+                // domed shrine
+                float bh = Random.Range(4f, 8f);
+                MakePart(PrimitiveType.Cylinder, root.transform, marbleMat,
+                    spot + Vector3.up * (bh * 0.5f), along,
+                    new Vector3(5f, bh * 0.5f, 5f));
+                MakePart(PrimitiveType.Sphere, root.transform, goldMat,
+                    spot + Vector3.up * (bh + 1.2f), along,
+                    new Vector3(5.4f, 3.4f, 5.4f));
+            }
 
-            // real snowy models from the nature pack when available
-            if (roll < 0.62f && snowPrefabs != null && snowPrefabs.Count > 0)
-            {
-                GameObject p = snowPrefabs[Random.Range(0, snowPrefabs.Count)];
-                GameObject go = PlaceNatureModel(p, spot, Random.Range(treeHeightMin, treeHeightMax));
-                decorations.Add(new Chunk { endDistance = dist, go = go });
-            }
-            else if (roll < 0.85f && snowRockPrefabs != null && snowRockPrefabs.Count > 0)
-            {
-                GameObject p = snowRockPrefabs[Random.Range(0, snowRockPrefabs.Count)];
-                GameObject go = PlaceNatureModel(p, spot, Random.Range(1.2f, 3.2f));
-                decorations.Add(new Chunk { endDistance = dist, go = go });
-            }
-            else if (roll < 0.93f) SpawnSnowPine(dist, spot);   // procedural fallback
-            else SpawnSnowDrift(dist, spot);
+            AddDecoration(dist, root);
         }
 
+        // cloud banks drifting at road level
+        if (Random.value < 0.5f)
+        {
+            Vector3 c = pos + right * (Random.Range(-1f, 1f) * (half + 30f))
+                        + Vector3.down * Random.Range(1f, 5f);
+            var cloud = new GameObject("HeavenCloud");
+            cloud.transform.SetParent(transform, false);
+            int puffs = Random.Range(3, 6);
+            for (int i = 0; i < puffs; i++)
+            {
+                MakePart(PrimitiveType.Sphere, cloud.transform, cloudMat,
+                    c + new Vector3(Random.Range(-7f, 7f), Random.Range(-1.5f, 1.5f),
+                                    Random.Range(-7f, 7f)),
+                    Quaternion.identity,
+                    new Vector3(Random.Range(8f, 16f), Random.Range(3f, 6f),
+                                Random.Range(8f, 16f)));
+            }
+            AddDecoration(dist, cloud);
+        }
+    }
+
+    // --- the mountain pass
+    // Counterclockwise means every corner turns left, which puts the mountain
+    // permanently on the left of the road and the drop on the right.
+    const int MountainTurnDir = -1;   // negative curvature = left turn
+    const int MountainSide = -1;      // rock wall climbing away
+    const int DropSide = 1;           // sheer drop into the valley
+
+
+    void SpawnOneSnowTree(float dist, Vector3 pos, Vector3 right, int side, float offset)
+    {
+        Vector3 spot = pos + right * (offset * side)
+            + Quaternion.Euler(0f, Random.Range(0f, 360f), 0f) * Vector3.forward
+              * Random.Range(0f, 2.5f);
+        // stand it on the bank rather than on the old flat ground line
+        spot += Vector3.up * VergeHeightAt(offset, side, dist);
+        // 3D, so a tree never appears standing on nothing beside a loop of
+        // the pass that runs above or below this one
+        if (!RoadClear3D(spot, roadWidth * 0.5f + 2f, 12f)) return;
+
+        LoadNaturePrefabs();
+
+        // mostly snowy trees, with snowy rocks and bushes mixed through
+        if (Random.value < 0.78f && snowPrefabs != null && snowPrefabs.Count > 0)
+        {
+            GameObject p = snowPrefabs[Random.Range(0, snowPrefabs.Count)];
+            GameObject go = PlaceNatureModel(p, spot, Random.Range(treeHeightMin, treeHeightMax));
+            AddDecoration(dist, go);
+        }
+        else if (snowRockPrefabs != null && snowRockPrefabs.Count > 0)
+        {
+            GameObject p = snowRockPrefabs[Random.Range(0, snowRockPrefabs.Count)];
+            GameObject go = PlaceNatureModel(p, spot, Random.Range(1.2f, 3.2f));
+            AddDecoration(dist, go);
+        }
     }
 
     void SpawnSnowPine(float dist, Vector3 spot)
@@ -1588,7 +1998,7 @@ public class TrackGenerator : MonoBehaviour
                 spot + Vector3.up * (y + 0.28f * s), Quaternion.identity,
                 new Vector3(w * 0.86f, 0.45f * s, w * 0.86f));
         }
-        decorations.Add(new Chunk { endDistance = dist, go = tree });
+        AddDecoration(dist, tree);
     }
 
     void SpawnRock(float dist, Vector3 spot, float size)
@@ -1611,7 +2021,7 @@ public class TrackGenerator : MonoBehaviour
             spot + Vector3.up * size * 0.75f, Quaternion.identity,
             new Vector3(size * 0.95f, size * 0.35f, size * 0.95f));
 
-        decorations.Add(new Chunk { endDistance = dist, go = rock });
+        AddDecoration(dist, rock);
     }
 
     void SpawnSnowDrift(float dist, Vector3 spot)
@@ -1623,7 +2033,132 @@ public class TrackGenerator : MonoBehaviour
         MakePart(PrimitiveType.Sphere, drift.transform, snowMat,
             spot + Vector3.up * 0.2f, Quaternion.Euler(0f, Random.Range(0f, 360f), 0f),
             new Vector3(w, Random.Range(0.9f, 1.8f), w * 0.6f));
-        decorations.Add(new Chunk { endDistance = dist, go = drift });
+        AddDecoration(dist, drift);
+    }
+
+    // rockMat already exists - the boulders reuse the track's own rock colour
+    Material grassMat, grassDryMat;
+    float nextGrassDistance;
+
+    /// <summary>
+    /// Bakes a stretch of roadside grass into one mesh. Each blade is a narrow
+    /// tapered quad, leaning a random way - hundreds of them cost one draw
+    /// call, and the patch is pruned with the rest of the scenery.
+    /// </summary>
+    void BuildGrassPatch(float dist, float length)
+    {
+        // no grass on the city streets or under the snow
+        if (biomeBlend > 0.55f || snowBlend > 0.35f) return;
+
+        EnsureGroundMaterials();
+
+        var verts = new List<Vector3>();
+        var tris = new List<int>();
+        var norms = new List<Vector3>();
+
+        int perSide = Mathf.Max(8, grassBladesPerPatch);
+        float half = roadWidth * 0.5f;
+
+        for (int side = -1; side <= 1; side += 2)
+        {
+            for (int i = 0; i < perSide; i++)
+            {
+                float along = dist + Random.Range(0f, length);
+                SamplePose(along, out Vector3 pos, out Vector3 fwd, out _);
+                Vector3 right = Vector3.Cross(Vector3.up, fwd).normalized;
+
+                // Half the blades crowd the roadside, the rest are spread right
+                // out across the field - without that second group the ground
+                // beyond the first few metres reads as bare.
+                float outward;
+                if (Random.value < 0.5f)
+                {
+                    float f = Random.value;
+                    outward = half + 0.35f + f * f * grassReach * 0.35f;
+                }
+                else
+                {
+                    outward = half + 0.35f + Random.Range(0.2f, 1f) * grassReach;
+                }
+                Vector3 root = pos + right * (outward * side);
+
+                // The road loops back on itself, so grass this far out can land
+                // on another stretch of tarmac. Anything past the immediate
+                // verge gets checked against the whole track.
+                if (outward - half > 10f && !RoadClearCoarse(root, half + 2.5f)) continue;
+
+                // taller further out, so distant grass still reads on screen
+                float outFrac = Mathf.Clamp01((outward - half) / grassReach);
+                float h = Random.Range(0.24f, 0.62f) * (1f + outFrac * 1.1f);
+                float w = Random.Range(0.05f, 0.11f) * (1f + outFrac * 0.8f);
+                float lean = Random.Range(-0.22f, 0.22f);
+
+                // a blade is a quad that narrows to a point and leans over
+                Vector3 dir = Quaternion.Euler(0f, Random.Range(0f, 360f), 0f) * Vector3.forward;
+                Vector3 side2 = Vector3.Cross(Vector3.up, dir).normalized;
+                Vector3 tip = root + Vector3.up * h + dir * (lean * h);
+
+                int b = verts.Count;
+                verts.Add(root - side2 * w);
+                verts.Add(root + side2 * w);
+                verts.Add(tip + side2 * w * 0.18f);
+                verts.Add(tip - side2 * w * 0.18f);
+                for (int n = 0; n < 4; n++) norms.Add(Vector3.up);
+
+                tris.Add(b); tris.Add(b + 2); tris.Add(b + 1);
+                tris.Add(b); tris.Add(b + 3); tris.Add(b + 2);
+                // and again wound the other way, so it is visible from behind
+                tris.Add(b); tris.Add(b + 1); tris.Add(b + 2);
+                tris.Add(b); tris.Add(b + 2); tris.Add(b + 3);
+            }
+        }
+
+        if (verts.Count == 0) return;
+
+        var go = new GameObject("GrassPatch");
+        go.transform.SetParent(transform, false);
+        var mesh = new Mesh { name = "Grass" };
+        mesh.SetVertices(verts);
+        mesh.SetNormals(norms);
+        mesh.SetTriangles(tris, 0);
+        mesh.RecalculateBounds();
+
+        go.AddComponent<MeshFilter>().sharedMesh = mesh;
+        var mr = go.AddComponent<MeshRenderer>();
+        mr.sharedMaterial = Random.value < 0.35f ? grassDryMat : grassMat;
+        mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+
+        AddDecoration(dist + length, go);
+    }
+
+    void EnsureGroundMaterials()
+    {
+        if (grassMat != null) return;
+        Shader sh = Shader.Find("Universal Render Pipeline/Lit");
+        if (sh == null) sh = Shader.Find("Standard");
+        grassMat = new Material(sh) { color = new Color(0.28f, 0.52f, 0.20f) };
+        grassDryMat = new Material(sh) { color = new Color(0.45f, 0.55f, 0.24f) };
+        if (grassMat.HasProperty("_Smoothness")) grassMat.SetFloat("_Smoothness", 0.05f);
+        if (grassDryMat.HasProperty("_Smoothness")) grassDryMat.SetFloat("_Smoothness", 0.05f);
+    }
+
+    /// <summary>A lumpy boulder to break up the verge.</summary>
+    void SpawnRock(float dist, Vector3 spot)
+    {
+        EnsureGroundMaterials();
+
+        var go = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+        Destroy(go.GetComponent<Collider>());
+        go.name = "Rock";
+        go.transform.SetParent(transform, false);
+        go.transform.position = spot;
+        go.transform.rotation = Random.rotation;
+        float s = Random.Range(0.35f, 1.3f);
+        go.transform.localScale = new Vector3(s * Random.Range(0.8f, 1.4f),
+                                              s * Random.Range(0.5f, 0.9f),
+                                              s * Random.Range(0.8f, 1.4f));
+        go.GetComponent<MeshRenderer>().sharedMaterial = rockMat;
+        AddDecoration(dist, go);
     }
 
     void SpawnTreesAt(float dist)
@@ -1642,10 +2177,55 @@ public class TrackGenerator : MonoBehaviour
             SpawnOneTree(dist, pos, right, side,
                 half + Random.Range(treeMinFromRoad, midBand));
 
-            if (Random.value < 0.85f)
+            if (Random.value < 0.95f)
             {
                 SpawnOneTree(dist, pos, right, side,
                     half + Random.Range(midBand, treeMaxFromRoad));
+            }
+
+            // Rows further and further back, each a little sparser, so the
+            // trees read as a forest running off into the fog rather than a
+            // hedge with empty ground behind it.
+            if (Random.value < 0.85f)
+            {
+                SpawnOneTree(dist, pos, right, side,
+                    half + Random.Range(treeMaxFromRoad, treeMaxFromRoad * 1.8f));
+            }
+            if (Random.value < 0.65f)
+            {
+                SpawnOneTree(dist, pos, right, side,
+                    half + Random.Range(treeMaxFromRoad * 1.8f, treeMaxFromRoad * 2.8f));
+            }
+            if (Random.value < 0.45f)
+            {
+                SpawnOneTree(dist, pos, right, side,
+                    half + Random.Range(treeMaxFromRoad * 2.8f, treeMaxFromRoad * 4f));
+            }
+
+            // the odd boulder just off the tarmac
+            if (Random.value < 0.10f)
+            {
+                Vector3 spot = pos + right * ((half + Random.Range(1.6f, 7f)) * side);
+                if (AreaClearOfRoad(spot, half + 1.2f)) SpawnRock(dist, spot);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Turns GPU instancing on for a prefab's materials. The scenery is the
+    /// same handful of meshes repeated hundreds of times, so instancing folds
+    /// all those copies into a few draw calls - without it this density would
+    /// be far too expensive on a phone.
+    /// </summary>
+    static void EnableInstancing(GameObject prefab)
+    {
+        if (prefab == null) return;
+        foreach (var r in prefab.GetComponentsInChildren<Renderer>(true))
+        {
+            var mats = r.sharedMaterials;
+            for (int i = 0; i < mats.Length; i++)
+            {
+                if (mats[i] != null) mats[i].enableInstancing = true;
             }
         }
     }
@@ -1658,24 +2238,24 @@ public class TrackGenerator : MonoBehaviour
         foreach (string n in TreeModelNames)
         {
             GameObject p = Resources.Load<GameObject>(n);
-            if (p != null) treePrefabs.Add(p);
+            if (p != null) { EnableInstancing(p); treePrefabs.Add(p); }
         }
         foreach (string n in BushModelNames)
         {
             GameObject p = Resources.Load<GameObject>(n);
-            if (p != null) bushPrefabs.Add(p);
+            if (p != null) { EnableInstancing(p); bushPrefabs.Add(p); }
         }
         snowPrefabs = new List<GameObject>();
         foreach (string n in SnowModelNames)
         {
             GameObject p = Resources.Load<GameObject>(n);
-            if (p != null) snowPrefabs.Add(p);
+            if (p != null) { EnableInstancing(p); snowPrefabs.Add(p); }
         }
         snowRockPrefabs = new List<GameObject>();
         foreach (string n in SnowRockNames)
         {
             GameObject p = Resources.Load<GameObject>(n);
-            if (p != null) snowRockPrefabs.Add(p);
+            if (p != null) { EnableInstancing(p); snowRockPrefabs.Add(p); }
         }
     }
 
@@ -1707,7 +2287,8 @@ public class TrackGenerator : MonoBehaviour
 
         if (!AreaClearOfRoad(spot, roadWidth * 0.5f + 2f)) return;
 
-        bool bush = Random.value < 0.15f;
+        // plenty of undergrowth mixed in with the trees, not just trunks
+        bool bush = Random.value < 0.32f;
         List<GameObject> pool = bush ? bushPrefabs : treePrefabs;
         if (pool != null && pool.Count > 0)
         {
@@ -1735,11 +2316,11 @@ public class TrackGenerator : MonoBehaviour
                 go.transform.position += Vector3.up * (spot.y - newBottom);
             }
 
-            decorations.Add(new Chunk { endDistance = dist, go = go });
+            AddDecoration(dist, go);
             return;
         }
 
-        SpawnProceduralTree(dist, spot);
+        // no procedural stand-in: if the pack model is missing, nothing is placed
     }
 
     // fallback if the nature models are missing
@@ -1766,7 +2347,7 @@ public class TrackGenerator : MonoBehaviour
             MakePart(PrimitiveType.Sphere, tree.transform, leaf,
                 spot + new Vector3(0.6f, 0.3f, 0.3f) * s * 0.8f, Quaternion.identity,
                 new Vector3(1.0f, 0.7f, 1.0f) * s * 0.8f);
-            decorations.Add(new Chunk { endDistance = dist, go = tree });
+            AddDecoration(dist, tree);
             return;
         }
 
@@ -1824,7 +2405,43 @@ public class TrackGenerator : MonoBehaviour
         tree.transform.rotation = Quaternion.Euler(
             Random.Range(-3.5f, 3.5f), Random.Range(0f, 360f), Random.Range(-3.5f, 3.5f));
 
-        decorations.Add(new Chunk { endDistance = dist, go = tree });
+        AddDecoration(dist, tree);
+    }
+
+    /// <summary>
+    /// Same test as AreaClearOfRoad but sampling the track far more coarsely -
+    /// used where it runs hundreds of times a patch and a metre of precision
+    /// does not matter.
+    /// </summary>
+    bool RoadClearCoarse(Vector3 spot, float clearance)
+    {
+        float sq = clearance * clearance;
+        for (int i = 0; i < samples.Count; i += 10)
+        {
+            Vector3 d = samples[i].pos - spot;
+            d.y = 0f;
+            if (d.sqrMagnitude < sq) return false;
+        }
+        return true;
+    }
+
+    /// <summary>
+    /// Clear of the road in three dimensions. The mountain pass spirals over
+    /// itself, so a flat distance test would refuse to build anything near a
+    /// loop that is actually thirty metres overhead - and worse, would happily
+    /// build a rock face straight through the road above.
+    /// </summary>
+    bool RoadClear3D(Vector3 spot, float horizontal, float vertical)
+    {
+        float sq = horizontal * horizontal;
+        for (int i = 0; i < samples.Count; i += 3)
+        {
+            Vector3 d = samples[i].pos - spot;
+            if (Mathf.Abs(d.y) > vertical) continue;   // a different level
+            d.y = 0f;
+            if (d.sqrMagnitude < sq) return false;
+        }
+        return true;
     }
 
     bool AreaClearOfRoad(Vector3 spot, float clearance)
@@ -1842,41 +2459,47 @@ public class TrackGenerator : MonoBehaviour
     // ------------------------------------------------------------- obstacles
 
     [Tooltip("Clear width the car must always have to squeeze through.")]
-    public float minPassableGap = 3.4f;
+    public float minPassableGap = 5f;
 
     /// <summary>
     /// Picks a lateral position that always leaves a drivable gap next to
     /// anything already blocking this stretch of road - two obstacles can
     /// never seal the lane at the same distance.
     /// </summary>
+    [Tooltip("Only one hazard at a time within this many metres of road.")]
+    public float obstacleSoloRange = 14f;
+
     bool FindOpenLane(float dist, float halfWidth, float lookRange, out float lateral)
     {
         float limit = roadWidth * 0.5f - halfWidth - 0.3f;
         lateral = 0f;
         if (limit <= 0f) return false;
 
-        // collect what already blocks this stretch
-        var blocks = new List<Vector2>(); // (min, max) lateral spans
+        // One hazard at a time. Anything already on this stretch of road means
+        // this spawn is skipped entirely, so the player is never threading a
+        // gap between two things at once.
         for (int i = 0; i < obstacles.Count; i++)
         {
-            ObstacleData o = obstacles[i];
-            if (Mathf.Abs(o.distance - dist) > lookRange) continue;
-            blocks.Add(new Vector2(o.lateral - o.halfWidth, o.lateral + o.halfWidth));
+            if (Mathf.Abs(obstacles[i].distance - dist) < obstacleSoloRange) return false;
         }
         for (int i = 0; i < traffic.Count; i++)
         {
-            TrafficCar t = traffic[i];
-            if (Mathf.Abs(t.distance - dist) > lookRange) continue;
-            blocks.Add(new Vector2(t.lateral - 1.05f, t.lateral + 1.05f));
+            if (Mathf.Abs(traffic[i].distance - dist) < obstacleSoloRange) return false;
         }
 
-        // try random spots, keeping a clear corridor somewhere on the road
-        for (int attempt = 0; attempt < 14; attempt++)
+        // Hug one side of the road, so the way past is a whole open half
+        // rather than a slot beside a centred obstacle.
+        int side = Random.value < 0.5f ? -1 : 1;
+        float outer = limit;
+        float inner = Mathf.Max(halfWidth * 0.2f, limit - roadWidth * 0.30f);
+        lateral = side * Random.Range(inner, outer);
+
+        // leave room for the car itself between the hazard and the verge
+        if (roadWidth * 0.5f - (Mathf.Abs(lateral) + halfWidth) < 0.2f)
         {
-            float cand = Random.Range(-limit, limit);
-            if (LeavesGap(cand, halfWidth, blocks)) { lateral = cand; return true; }
+            lateral = side * (roadWidth * 0.5f - halfWidth - 0.25f);
         }
-        return false; // road too congested here - skip this spawn
+        return true;
     }
 
     bool LeavesGapForTraffic(float dist, float lateral)
@@ -2189,18 +2812,78 @@ public class TrackGenerator : MonoBehaviour
         tris.Add(v + 1); tris.Add(v + 2); tris.Add(v + 3);
     }
 
+    // The shoulder profile, as distance out from the road edge and how far
+    // the ground has fallen by then. On the pass these are replaced by a
+    // rock bank climbing on one side and a valley falling on the other.
+    static readonly float[] VergeWidths = { 9f, 20f, 38f };
+    static readonly float[] VergeDrops = { 0.06f, 0.5f, 2.2f };
+    // Kept shallower than the height the pass gains in one loop around the
+    // mountain, so an upper loop's shoulder can never reach down into the
+    // road running below it.
+    static readonly float[] BankRise = { 1.4f, 12f, 30f };    // cut into the mountain
+    static readonly float[] ValleyFall = { 0.8f, 10f, 34f };  // open air
+
+    // Where along the track the pass begins and ends. Driving the profile off
+    // DISTANCE rather than off the clock is what keeps it welded to the road:
+    // two chunks baked seconds apart still agree exactly at their shared edge,
+    // so the bank grows in smoothly instead of stepping at every seam.
+    float passStartDistance = -1f;
+    float passEndDistance = -1f;
+    const float PassRampMeters = 260f;
+
+    /// <summary>How strongly the mountain profile applies at this point.</summary>
+    float PassAmountAt(float dist)
+    {
+        if (passStartDistance < 0f) return 0f;
+        float k = Mathf.Clamp01((dist - passStartDistance) / PassRampMeters);
+        if (passEndDistance >= 0f)
+        {
+            k *= 1f - Mathf.Clamp01((dist - passEndDistance) / PassRampMeters);
+        }
+        return k;
+    }
+
+    /// <summary>
+    /// Height of the ground at a given distance out from the centre of the
+    /// road. Everything placed beside the pass uses this, so trees sit on the
+    /// bank instead of floating over it or being buried in it.
+    /// </summary>
+    public float VergeHeightAt(float lateral, int side, float dist)
+    {
+        float k = PassAmountAt(dist);
+        float prevY = -VergeDrops[0];      // matches the roadside vertex
+        float prevW = roadWidth * 0.5f;
+        for (int r = 0; r < VergeWidths.Length; r++)
+        {
+            float w = roadWidth * 0.5f + VergeWidths[r];
+            float y = side == MountainSide
+                ? Mathf.Lerp(-VergeDrops[r], BankRise[r], k)
+                : Mathf.Lerp(-VergeDrops[r], -ValleyFall[r], k);
+            if (lateral <= w)
+            {
+                return Mathf.Lerp(prevY, y, Mathf.InverseLerp(prevW, w, lateral));
+            }
+            prevY = y;
+            prevW = w;
+        }
+        return prevY;
+    }
+
     void BuildVerges(int first, int last)
     {
-        // three rings out from the road, each a little lower, so the ground
-        // reads as a shoulder falling away instead of a flat sheet that can
-        // slice through a climbing road
-        float[] widths = { 9f, 20f, 38f };
-        float[] drops = { 0.06f, 0.5f, 2.2f };
+        // Three rings out from the road. Off the pass they step gently down
+        // on both sides; on the pass the mountain side climbs into a cut bank
+        // and the valley side falls away. Building the cliffs INTO this mesh
+        // means they follow the road exactly - they cannot leave a hole and
+        // they cannot end up on the road.
+        float[] widths = VergeWidths;
+        int rings = widths.Length;
+        var dropsLeft = new float[rings];
+        var dropsRight = new float[rings];
 
         int count = last - first + 1;
         if (count < 2) return;
 
-        int rings = widths.Length;
         int cols = (rings + 1) * 2;           // mirrored either side of the road
         var verts = new Vector3[count * cols];
         var tris = new List<int>((count - 1) * (cols - 1) * 6);
@@ -2212,19 +2895,32 @@ public class TrackGenerator : MonoBehaviour
             Vector3 fwd = Quaternion.Euler(0f, sm.headingDeg, 0f) * Vector3.forward;
             Vector3 right = Vector3.Cross(Vector3.up, fwd).normalized;
 
+            // how far into the pass THIS metre of road is
+            float k = PassAmountAt(sm.dist);
+            for (int r = 0; r < rings; r++)
+            {
+                float mountain = Mathf.Lerp(VergeDrops[r], -BankRise[r], k);
+                float valley = Mathf.Lerp(VergeDrops[r], ValleyFall[r], k);
+                dropsLeft[r] = MountainSide < 0 ? mountain : valley;
+                dropsRight[r] = MountainSide < 0 ? valley : mountain;
+            }
+
             // left side, far to near, then right side, near to far
             for (int rIdx = 0; rIdx < rings; rIdx++)
             {
                 int band = rings - 1 - rIdx;
                 verts[i * cols + rIdx] = sm.pos
-                    - right * (half + widths[band]) - Vector3.up * drops[band];
+                    - right * (half + widths[band]) - Vector3.up * dropsLeft[band];
             }
-            verts[i * cols + rings] = sm.pos - right * half - Vector3.up * drops[0];
-            verts[i * cols + rings + 1] = sm.pos + right * half - Vector3.up * drops[0];
+            // The two vertices at the road edge always keep the ordinary
+            // shoulder drop. Letting the bank start here is what put a step
+            // along the roadside and stopped the ground meeting the tarmac.
+            verts[i * cols + rings] = sm.pos - right * half - Vector3.up * VergeDrops[0];
+            verts[i * cols + rings + 1] = sm.pos + right * half - Vector3.up * VergeDrops[0];
             for (int rIdx = 0; rIdx < rings; rIdx++)
             {
                 verts[i * cols + rings + 2 + rIdx] = sm.pos
-                    + right * (half + widths[rIdx]) - Vector3.up * drops[rIdx];
+                    + right * (half + widths[rIdx]) - Vector3.up * dropsRight[rIdx];
             }
         }
 
@@ -2309,6 +3005,70 @@ public class TrackGenerator : MonoBehaviour
             {
                 if (tirePickups[i].go != null) Object.Destroy(tirePickups[i].go);
                 tirePickups.RemoveAt(i);
+            }
+        }
+    }
+
+    // ------------------------------------------- scenery, indexed by position
+
+    const float DecoCell = 16f;
+    readonly Dictionary<long, List<Chunk>> decoGrid = new Dictionary<long, List<Chunk>>();
+
+    static long CellKey(Vector3 p)
+    {
+        long cx = (long)Mathf.Floor(p.x / DecoCell);
+        long cz = (long)Mathf.Floor(p.z / DecoCell);
+        return (cx << 32) ^ (cz & 0xffffffffL);
+    }
+
+    void AddDecoration(float endDistance, GameObject go)
+    {
+        if (go == null) return;
+        var c = new Chunk { endDistance = endDistance, go = go };
+        decorations.Add(c);
+
+        long k = CellKey(go.transform.position);
+        if (!decoGrid.TryGetValue(k, out List<Chunk> list))
+        {
+            list = new List<Chunk>();
+            decoGrid[k] = list;
+        }
+        list.Add(c);
+    }
+
+    /// <summary>
+    /// Clears anything standing where the road has just been built. Scenery is
+    /// placed against the road that exists AT THE TIME it is planted, and the
+    /// track can turn back on itself and come through that ground hundreds of
+    /// metres later - which is exactly how a tree ends up in the middle of the
+    /// road, only to vanish when the chunk it belonged to is pruned.
+    /// </summary>
+    void ClearDecorationsAt(Vector3 roadPos)
+    {
+        float clear = roadWidth * 0.5f + 3f;
+        float sq = clear * clear;
+
+        for (int dx = -1; dx <= 1; dx++)
+        {
+            for (int dz = -1; dz <= 1; dz++)
+            {
+                long k = CellKey(roadPos + new Vector3(dx * DecoCell, 0f, dz * DecoCell));
+                if (!decoGrid.TryGetValue(k, out List<Chunk> list)) continue;
+
+                for (int i = list.Count - 1; i >= 0; i--)
+                {
+                    Chunk c = list[i];
+                    if (c.go == null) { list.RemoveAt(i); continue; }
+
+                    Vector3 d = c.go.transform.position - roadPos;
+                    if (Mathf.Abs(d.y) > 9f) continue;   // a loop above or below
+                    d.y = 0f;
+                    if (d.sqrMagnitude > sq) continue;
+
+                    Object.Destroy(c.go);
+                    c.go = null;
+                    list.RemoveAt(i);
+                }
             }
         }
     }

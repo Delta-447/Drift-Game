@@ -21,7 +21,7 @@ public class AudioManager : MonoBehaviour
     public float enginePitchSmoothing = 3.5f;
 
     AudioClip engineClip, engineEvClip, skidClip, scrapeClip, crashClip, whooshClip, slipClip, tapClip, coinClip, musicClip, timeTravelClip, popClip;
-    AudioClip gameMusicClip, beepClip, goClip, powerUpClip, boingClip, smashClip, finishWhooshClip;
+    AudioClip gameMusicClip, beepClip, goClip, powerUpClip, boingClip, smashClip, finishWhooshClip, wheelTickClip;
 
     // --- music crossfading
     AudioClip queuedMusic;      // waiting for the current track to fade out
@@ -29,7 +29,7 @@ public class AudioManager : MonoBehaviour
     bool musicSilent;           // held down between tracks
     public float musicFadeOutSpeed = 1.3f;
     public float musicFadeInSpeed = 1.1f;
-    AudioSource engineSource, skidSource, oneShotSource, musicSource;
+    AudioSource engineSource, skidSource, oneShotSource, musicSource, wheelSource;
     CarController car;
     bool driving;
     [Tooltip("Silences the music without losing the volume setting - the intro " +
@@ -53,6 +53,10 @@ public class AudioManager : MonoBehaviour
         boingClip = Resources.Load<AudioClip>("Audio/boing");
         smashClip = Resources.Load<AudioClip>("Audio/smash");
         finishWhooshClip = Resources.Load<AudioClip>("Audio/finish_whoosh");
+        // Built in code rather than loaded. An imported 40ms wav is easy to
+        // lose to a failed import or a near-silent normalisation pass, and a
+        // click you cannot hear is the same as no click at all.
+        wheelTickClip = MakeClickClip();
         beepClip = Resources.Load<AudioClip>("Audio/count_beep");
         goClip = Resources.Load<AudioClip>("Audio/count_go");
         // the driving theme - a trimmed wav so the loop has no gap
@@ -64,6 +68,7 @@ public class AudioManager : MonoBehaviour
         engineSource = MakeSource(engineClip, true);
         skidSource = MakeSource(skidClip, true);
         oneShotSource = MakeSource(null, false);
+        wheelSource = MakeSource(null, false);   // pitched, so it needs its own
         musicSource = MakeSource(musicClip, true);
         if (musicClip != null)
         {
@@ -75,6 +80,28 @@ public class AudioManager : MonoBehaviour
         // start silent; loops start on demand
         engineSource.volume = 0f;
         skidSource.volume = 0f;
+    }
+
+    /// <summary>A hard, dry knock - the peg hitting the flapper.</summary>
+    static AudioClip MakeClickClip()
+    {
+        const int rate = 44100;
+        int n = rate * 40 / 1000;
+        var data = new float[n];
+        for (int i = 0; i < n; i++)
+        {
+            float t = (float)i / rate;
+            float env = Mathf.Exp(-t * 170f);
+            // pitched body plus a noise transient, so it reads as wood
+            // being struck rather than a beep
+            float tone = Mathf.Sin(2f * Mathf.PI * 1500f * t)
+                       + 0.5f * Mathf.Sin(2f * Mathf.PI * 2900f * t);
+            float noise = Random.Range(-1f, 1f) * Mathf.Exp(-t * 900f);
+            data[i] = Mathf.Clamp(tone * 0.55f + noise * 0.8f, -1f, 1f) * env;
+        }
+        var clip = AudioClip.Create("wheel_tick", n, 1, rate, false);
+        clip.SetData(data, 0);
+        return clip;
     }
 
     AudioSource MakeSource(AudioClip clip, bool loop)
@@ -134,6 +161,20 @@ public class AudioManager : MonoBehaviour
     public void PlayBoing() { PlayOneShot(boingClip, 0.85f); }
     public void PlaySmash() { PlayOneShot(smashClip, 0.9f); }
     public void PlayFinishWhoosh() { PlayOneShot(finishWhooshClip, 1.2f); }
+
+    /// <summary>
+    /// One peg of the wheel passing the pointer. It runs on its own source
+    /// because it is re-pitched constantly, and that would bend any coin or
+    /// button sound sharing the channel.
+    /// </summary>
+    public void PlayWheelTick(float pitch, float volume)
+    {
+        if (wheelTickClip == null || wheelSource == null) return;
+        wheelSource.pitch = pitch;
+        // the wheel is the only thing making noise on this screen, so it can
+        // afford to be loud - a click at menu-button volume vanishes
+        wheelSource.PlayOneShot(wheelTickClip, Mathf.Clamp01(volume) * 1.6f);
+    }
     public void PlayCountBeep() { PlayOneShot(beepClip, 0.85f); }
     public void PlayCountGo() { PlayOneShot(goClip, 1f); }
     public void PlayTimeTravel() { PlayOneShot(timeTravelClip, 1f); }

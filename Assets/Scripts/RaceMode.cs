@@ -27,6 +27,7 @@ public class RaceMode : MonoBehaviour
         }
     }
 
+
     public static int BiomeOf(int level) { return level / LevelsPerBiome; }
     public static int StageOf(int level) { return level % LevelsPerBiome; }
 
@@ -167,7 +168,11 @@ public class RaceMode : MonoBehaviour
         // level 1 is comfortably beatable in a stock car; by the last levels
         // the field is far quicker than a stock car and only a well-upgraded
         // engine keeps up. Pace is a fraction of the stock race speed.
-        float levelPace = 0.84f + level * 0.024f;   // 0.84 -> 1.30
+        // Each level is worth roughly a level and a half of engine upgrade, so
+        // the field pulls away from a car you have stopped improving. Level 1
+        // is a comfortable win in a stock car; level 20 needs the engine maxed
+        // and a clean run through the boost pads.
+        float levelPace = 0.86f + level * 0.036f;   // 0.86 -> 1.54
 
         for (int i = 0; i < Opponents; i++)
         {
@@ -188,7 +193,9 @@ public class RaceMode : MonoBehaviour
             };
             // each rival is a small percentage off the player's pace; the
             // actual speed is matched to the player every frame in Tick()
-            r.paceFactor = levelPace * Random.Range(0.97f, 1.05f);
+            // a tight spread, so the field is a wall to get through rather
+            // than one quick car and four stragglers
+            r.paceFactor = levelPace * Random.Range(0.985f, 1.035f);
             r.baseSpeed = stockMaxSpeed * r.paceFactor;
             // everyone leaves the line at race pace - the player does too, so
             // nobody appears to rocket away from the field
@@ -286,7 +293,9 @@ public class RaceMode : MonoBehaviour
             // rivals accelerate alongside the player: their speed tracks the
             // player's current speed, so the whole field ramps up together
             float lead = r.distance - playerDistance;
-            float rubber = Mathf.Clamp(1f - lead / 320f, 0.96f, 1.05f);
+            // only a whisker of rubber-banding: enough to keep the field
+            // together, not enough to hand the race back to a slow car
+            float rubber = Mathf.Clamp(1f - lead / 320f, 0.985f, 1.02f);
             // fixed race pace - nobody accelerates as the race goes on
             float target = stockSpeedReference * r.paceFactor * rubber;
             // never drive into the back of a rival in the same lane

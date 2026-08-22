@@ -15,14 +15,15 @@ public class GameManager : MonoBehaviour
     enum Mode { Endless, Race }
 
     [Header("Scoring")]
-    public float pointsPerMeter = 0.09f;
+    // a constant for the same reason as the speed values below
+    float pointsPerMeter { get { return PointsPerMetre; } }
     [Tooltip("How fast the car cruises behind the main menu.")]
     public float lobbyCruiseSpeed = 11f;
     [Tooltip("Road kept behind the car in the lobby - the camera looks back " +
              "down it, so it must not be pruned in view.")]
     public float lobbyBehindDistance = 260f;
     [Tooltip("Road kept behind the car during a run.")]
-    public float runBehindDistance = 45f;
+    public float runBehindDistance = 110f;
     public float driftPointsPerSecond = 30f;
     public int nearMissBonus = 150;
 
@@ -63,15 +64,40 @@ public class GameManager : MonoBehaviour
     }
     public float endlessRoadWidth = 11f;
 
-    [Header("Difficulty (applied to the car each run)")]
-    [Tooltip("Speed gained per second of survival. Lower = gentler ramp.")]
-    public float runSpeedGain = 0.20f;
-    public float runBaseSpeed = 13f;
-    public float runMaxSpeed = 30f;
+    // ---------------------------------------------------------------- tuning
+    // These are CONSTANTS, not inspector fields, deliberately. Unity saves a
+    // copy of every public field into the scene, and that saved copy wins over
+    // whatever the code says - so editing a public default here would silently
+    // do nothing on an object that already exists in the scene. Anything that
+    // has to be reliably tunable from code lives here instead.
+
+    /// <summary>Speed at the start of an endless run, in m/s.</summary>
+    // 35 mph, in m/s. The HUD can read in either unit, but the tuning is
+    // quoted in mph because that is how it was asked for.
+    const float RunBaseSpeed = 15.65f;
+    /// <summary>Top speed of an endless run before car bonuses.</summary>
+    const float RunMaxSpeed = 42.92f;   // 96 mph
+    /// <summary>m/s gained per second: 8 m/s over about six minutes.</summary>
+    const float RunSpeedGain = 0.0649f;  // 35 -> 96 mph over seven minutes
+
+
+    /// <summary>Score per metre travelled, before multipliers.</summary>
+    const float PointsPerMetre = 0.09f;
+
+    // kept as properties so the rest of the file reads the same as before
+    float runSpeedGain { get { return RunSpeedGain; } }
+    float runBaseSpeed { get { return RunBaseSpeed; } }
+    float runMaxSpeed { get { return RunMaxSpeed; } }
 
     [Header("Night city")]
     [Tooltip("Score at which the city is fully established.")]
-    public int nightCityScore = 10000;
+    public int nightCityScore = 10000;   // kept for the old inspector layout
+    [Tooltip("Seconds into a run when the sunset starts creeping in.")]
+    public float sunsetAtSeconds = 50f;
+    [Tooltip("Seconds into a run when the city is fully established.")]
+    public float cityAtSeconds = 110f;
+    [Tooltip("Seconds into a run when the snowy mountains take over.")]
+    public float snowAtSeconds = 200f;
     [Tooltip("Fraction of that score where the sunset begins.")]
     [Range(0.1f, 0.95f)] public float sunsetStartFraction = 0.45f;
     public Color sunsetSkyColor = new Color(0.98f, 0.45f, 0.22f); // warm orange
@@ -120,10 +146,11 @@ public class GameManager : MonoBehaviour
     Text menuBestText, menuCoinsText, coinHudText;
     Text shopCarName, shopStats, shopPrice, shopActionLabel, shopCoinsText;
     float volumeSetting, sensSetting;
-    float volMusic, volEngine, volDrift, volCoins;
+    float volMusic, volEngine, volDrift, volCoins, volSfx = 1f;
+    bool useMph = true;
     float baseSteerAccel;
     int invertSteer;
-    Text invertBtnLabel;
+    Text invertBtnLabel, unitsBtnLabel;
 
     // ------------------------------------------------------------- car shop
 
@@ -131,11 +158,13 @@ public class GameManager : MonoBehaviour
     public enum Currency { Coins = 0, Cyber = 1, Tempasta = 2, Caldera = 3, Vettura = 4 }
     static readonly string[] TokenNames = { "COINS", "VOLT TOKENS", "TAURION TOKENS",
                                             "CALDERA TOKENS", "STELLARA TOKENS" };
-    // token art (index matches Currency). Tempasta's bull is still .blend-only,
-    // so it falls back to a procedural shape until an FBX/OBJ arrives.
-    static readonly string[] TokenModels = {
-        null, "Tokens/cyber_bolt", "Tokens/tempasta_bull",
-        "Tokens/caldera_keys", "Tokens/vettura_horse" };
+    // Token art (index matches Currency). Flat 2D emblems rather than the
+    // scanned 3D props these used to be: at the size a token is ever drawn -
+    // an inch of phone screen - a silhouette reads instantly where a lit,
+    // shaded model just reads as a dark blob.
+    static readonly string[] TokenIcons = {
+        "UI/token_coin", "UI/token_bolt", "UI/token_bull",
+        "UI/token_key", "UI/token_horse" };
 
     // UI text colours per currency
     static readonly Color[] TokenColors = {
@@ -144,15 +173,6 @@ public class GameManager : MonoBehaviour
         new Color(0.85f, 0.6f, 0.3f),  // tempasta - bronze bull
         new Color(1f, 0.45f, 0.75f),   // caldera - pink keys
         new Color(0.75f, 0.75f, 0.8f), // vettura - black horse (light text)
-    };
-
-    // material colours for the token models themselves
-    static readonly Color[] TokenModelColors = {
-        new Color(1f, 0.82f, 0.1f),      // coins
-        new Color(1f, 0.87f, 0.05f),     // lightning - yellow
-        new Color(0.72f, 0.45f, 0.20f),  // bull - bronze
-        new Color(1f, 0.35f, 0.7f),      // keys - pink
-        new Color(0.05f, 0.05f, 0.06f),  // horse - black
     };
 
     int GetToken(Currency c)
@@ -203,12 +223,12 @@ public class GameManager : MonoBehaviour
 
     static readonly CarDef[] Cars =
     {
-        new CarDef("BEATALL",       null,                          0,       0f, 1f),
+        // index 0 is always the free starter car
+        new CarDef("TENSAI SPRINT", "CarsFBX/TENSAI R6",           0,       0f, 1f, false, null, PackYaw),
         new CarDef("TRAILMASTER",   "Cars/Landyroamer",            2000,    0f, 1f),
         new CarDef("TUNDRO",        "Cars/Toyoyo",                 4500,    0f, 1f),
         new CarDef("HANSEN 92",     "CarsFBX/HANSEN EK",           9000,    0f, 1f, false, null, PackYaw),
         new CarDef("VORTEX HATCH",  "CarsFBX/VORTEX HATCH",        16000,   0f, 1f, false, null, PackYaw),
-        new CarDef("TENSAI SPRINT", "CarsFBX/TENSAI R6",           25000,   0f, 1f, false, null, PackYaw),
         new CarDef("TORINA CLUB",   "CarsFBX/TORINA R5",           32000,   0f, 1f, false, null, PackYaw),
         new CarDef("HAULER X",      "CarsFBX/CYBERHAUL",           140,     0f, 1f, false, null, PackYaw, Currency.Cyber),
         new CarDef("AUTEN QX",      "CarsFBX/AUTEN QX",            60000,   0f, 1f, false, null, PackYaw),
@@ -250,15 +270,30 @@ public class GameManager : MonoBehaviour
     // off-screen rigs that render the spinning coin / reward car into the popup cells
     const int ShowcaseLayer = 30;
     GameObject showcaseRoot;
-    RenderTexture coinRT, rewardCarRT;
+    RenderTexture rewardCarRT;
 
     int totalCoins, coinsThisRun, selectedCar, shopIndex;
     GameObject garagePreview;
     float baseMaxSpeed;
     float carPointMult = 1f;
 
+    // Bump this string to wipe every save on the next launch - useful for
+    // testing first-run flow and the new-high-score reveal. It only fires once
+    // per token, so a player never loses progress twice to the same bump.
+    const string SaveResetToken = "reset-2026-08-21-cars";
+
+    static void WipeSaveOnce()
+    {
+        if (PlayerPrefs.GetString("SaveResetToken", "") == SaveResetToken) return;
+        PlayerPrefs.DeleteAll();
+        PlayerPrefs.SetString("SaveResetToken", SaveResetToken);
+        PlayerPrefs.Save();
+        Debug.Log("[SAVE] progress reset (" + SaveResetToken + ")");
+    }
+
     void Awake()
     {
+        WipeSaveOnce();
         // paint stays off the cars while the feature is locked
         CarPaint.Enabled = !PaintLocked;
         Application.targetFrameRate = 60;
@@ -271,6 +306,8 @@ public class GameManager : MonoBehaviour
         volDrift = PlayerPrefs.GetFloat("VolDrift", 1f);
         volCoins = PlayerPrefs.GetFloat("VolCoins", 1f);
         invertSteer = PlayerPrefs.GetInt("InvertSteer", 0);
+        volSfx = PlayerPrefs.GetFloat("VolSfx", 1f);
+        useMph = PlayerPrefs.GetInt("UseMph", 1) == 1;
         totalCoins = PlayerPrefs.GetInt("Coins", 0);
         selectedCar = Mathf.Clamp(PlayerPrefs.GetInt("SelectedCar", 0), 0, Cars.Length - 1);
         LoadQuests();
@@ -383,18 +420,32 @@ public class GameManager : MonoBehaviour
         car.maxSpeed = runMaxSpeed;
         car.speedGainPerSecond = runSpeedGain;
         baseMaxSpeed = runMaxSpeed;
+
+        // Speed and scoring are forced from code (see the constants above);
+        // everything about how the car handles is left to the CarController.
+        Debug.Log("[TUNING] speed " + runBaseSpeed + "->" + runMaxSpeed +
+                  " gain " + runSpeedGain + " | points/m " + pointsPerMeter +
+                  " | drift thr " + car.driftThreshold +
+                  " angle " + car.driftAngle);
         baseSteerAccel = car.steerAcceleration;
         ApplySettings();
         EquipSelected();
-        BuildIconShowcase();
         AssignCurrencyIcons();
         EnterMenu();
     }
 
+    // Flat art everywhere a coin or a tyre is used as an ICON. The 3D models
+    // are kept for the things that are actually objects in the world: the
+    // pickups on the road, and the spinning stacks you buy in the shop.
+    const string CoinIconPath = "UI/wheel_coins";
+    const string TireIconPath = "UI/wheel_tires";
+
     void AssignCurrencyIcons()
     {
-        foreach (var icon in currencyCoinIcons) icon.texture = coinIconRT;
-        foreach (var icon in currencyTireIcons) icon.texture = tireIconRT;
+        Texture2D coin = Resources.Load<Texture2D>(CoinIconPath);
+        Texture2D tire = Resources.Load<Texture2D>(TireIconPath);
+        foreach (var icon in currencyCoinIcons) icon.texture = coin;
+        foreach (var icon in currencyTireIcons) icon.texture = tire;
     }
 
     readonly List<RawImage> currencyCoinIcons = new List<RawImage>();
@@ -426,10 +477,7 @@ public class GameManager : MonoBehaviour
         if (showcaseRoot != null) return;
 
         showcaseRoot = new GameObject("LoginShowcase");
-        Vector3 coinPos = new Vector3(0f, -400f, 0f);   // far under the world
         Vector3 rewardPos = new Vector3(60f, -400f, 0f);
-
-        track.BuildCoinDisplay(coinPos, showcaseRoot.transform);
 
         // the day-7 reward car, spinning in its cell
         GameObject rewardCar = BuildPreviewModel(RewardCarIndex);
@@ -445,9 +493,7 @@ public class GameManager : MonoBehaviour
         SetLayerRecursively(showcaseRoot, ShowcaseLayer);
         if (mainCam != null) mainCam.cullingMask &= ~(1 << ShowcaseLayer);
 
-        coinRT = new RenderTexture(256, 256, 16);
         rewardCarRT = new RenderTexture(512, 512, 16);
-        MakeShowcaseCam(showcaseRoot.transform, coinPos + new Vector3(0f, 0.25f, -1.7f), coinPos, coinRT);
         MakeShowcaseCam(showcaseRoot.transform,
             rewardPos + new Vector3(0f, 1.0f, -3.4f), rewardPos, rewardCarRT);
 
@@ -466,6 +512,190 @@ public class GameManager : MonoBehaviour
         cam.cullingMask = 1 << ShowcaseLayer;
         cam.fieldOfView = 40f;
         cam.targetTexture = rt;
+    }
+
+    // ---------------------------------------------- new high score reveal
+
+    static readonly Vector3 BestStagePos = new Vector3(-1400f, -400f, 0f);
+    GameObject bestStage, bestCar;
+    RenderTexture bestCarRT;
+    GameObject bestPanel;
+    RawImage bestCarImage;
+    Text bestHeadline, bestNumber, bestHint;
+    float bestAnimT = -1f;
+    bool bestCarFlipped;
+    int bestShownScore;
+    string bestPendingCause;
+    int bestPendingScore, bestPendingCoins, bestPendingBonus;
+
+    void EnsureBestStage()
+    {
+        if (bestStage != null) return;
+
+        bestStage = new GameObject("BestRunStage");
+        bestStage.transform.position = BestStagePos;
+        SetLayerRecursively(bestStage, ShowcaseLayer);
+        if (mainCam != null) mainCam.cullingMask &= ~(1 << ShowcaseLayer);
+
+        // side on and low, so the car reads as a silhouette crossing the frame
+        // framed for a car sitting on the ground at its driving size
+        bestCarRT = new RenderTexture(900, 900, 16);
+        MakeShowcaseCam(bestStage.transform,
+            BestStagePos + new Vector3(3.4f, 1.9f, -6.6f),
+            BestStagePos + new Vector3(0f, 0.75f, 0f), bestCarRT);
+    }
+
+    void BuildBestPanel(Transform uiRoot)
+    {
+        bestPanel = MakePanel(uiRoot, "BestPanel");
+
+        // solid black - this screen is meant to feel like the game cut out
+        var blackGo = new GameObject("Black");
+        blackGo.transform.SetParent(bestPanel.transform, false);
+        var black = blackGo.AddComponent<Image>();
+        black.color = Color.black;
+        var blackRt = black.rectTransform;
+        blackRt.anchorMin = Vector2.zero;
+        blackRt.anchorMax = Vector2.one;
+        blackRt.offsetMin = blackRt.offsetMax = Vector2.zero;
+        black.raycastTarget = true;
+
+        bestHeadline = MakeText(bestPanel.transform, "BestHeadline", 66,
+            TextAnchor.MiddleCenter, new Vector2(0.5f, 0.5f),
+            new Vector2(0f, 330f), new Vector2(1000f, 120f));
+        bestHeadline.text = "NEW HIGH SCORE";
+        bestHeadline.color = new Color(1f, 0.82f, 0.15f);
+
+        bestNumber = MakeText(bestPanel.transform, "BestNumber", 150,
+            TextAnchor.MiddleCenter, new Vector2(0.5f, 0.5f),
+            new Vector2(0f, 190f), new Vector2(1000f, 230f));
+
+        // the car passes in front of the number as it is uncovered
+        var carGo = new GameObject("BestCarView");
+        carGo.transform.SetParent(bestPanel.transform, false);
+        bestCarImage = carGo.AddComponent<RawImage>();
+        bestCarImage.raycastTarget = false;
+        var carRt = bestCarImage.rectTransform;
+        carRt.anchorMin = carRt.anchorMax = carRt.pivot = new Vector2(0.5f, 0.5f);
+        carRt.anchoredPosition = new Vector2(0f, -140f);
+        carRt.sizeDelta = new Vector2(1200f, 1200f);
+
+        bestHint = MakeText(bestPanel.transform, "BestHint", 38,
+            TextAnchor.MiddleCenter, new Vector2(0.5f, 0.5f),
+            new Vector2(0f, -530f), new Vector2(900f, 80f));
+        bestHint.text = "TAP TO CONTINUE";
+        bestHint.color = new Color(1f, 1f, 1f, 0f);
+
+        var btn = bestPanel.AddComponent<Button>();
+        btn.transition = Selectable.Transition.None;
+        btn.targetGraphic = black;
+        btn.onClick.AddListener(CloseBestPanel);
+
+        bestPanel.SetActive(false);
+    }
+
+    /// <summary>
+    /// Black screen, and the car you were driving drifts across it laying the
+    /// new number down in its wake. The results screen waits behind it.
+    /// </summary>
+    void ShowBestRun(string cause, int finalScore, int collected, int bonus)
+    {
+        EnsureBestStage();
+
+        if (bestCar != null) Destroy(bestCar);
+        // The race/swap builder, not the garage one. The garage spins its cars
+        // so nobody ever notices which way they face, and its per-model flips
+        // are tuned for that; this builder is the one whose cars are visibly
+        // driving nose-first every time a rival passes you.
+        bestCar = BuildCarModel(selectedCar);
+        bestCarFlipped = false;
+        if (bestCar == null)
+        {
+            bestCar = BuildPreviewModel(selectedCar);   // the starter car
+            bestCarFlipped = true;                      // and it faces the camera
+        }
+        if (bestCar != null)
+        {
+            bestCar.transform.SetParent(bestStage.transform, false);
+            SetLayerRecursively(bestCar, ShowcaseLayer);
+            CarPaint.Apply(bestCar, selectedCar);
+        }
+
+        bestPendingCause = cause;
+        bestPendingScore = finalScore;
+        bestPendingCoins = collected;
+        bestPendingBonus = bonus;
+
+        bestShownScore = finalScore;
+        bestNumber.text = "0";
+        bestNumber.color = new Color(1f, 1f, 1f, 0f);
+        bestHeadline.color = new Color(1f, 0.82f, 0.15f, 0f);
+        bestHint.color = new Color(1f, 1f, 1f, 0f);
+        bestAnimT = 0f;
+        bestPanel.SetActive(true);
+        bestPanel.transform.SetAsLastSibling();
+        bestCarImage.texture = bestCarRT;
+
+        audioMan.PlayFinishWhoosh();
+    }
+
+    void TickBestRun()
+    {
+        if (bestAnimT < 0f) return;
+        bestAnimT += Time.unscaledDeltaTime;
+
+        const float Cross = 1.7f;
+        float p = Mathf.Clamp01(bestAnimT / Cross);
+        // slides in hard from the left and parks broadside in the middle of
+        // the screen - it has to hold still long enough to be looked at
+        float eased = 1f - Mathf.Pow(1f - p, 3f);
+        if (bestCar != null)
+        {
+            bestCar.transform.position =
+                BestStagePos + new Vector3(Mathf.Lerp(-8f, 0f, eased), 0f, 0f);
+            // Slides in broadside - nose to the right, the way it is
+            // travelling - then swings its front toward the camera and holds
+            // a three-quarter view.
+            float yaw = Mathf.Lerp(95f, 142f, eased) + (bestCarFlipped ? 180f : 0f);
+            bestCar.transform.rotation = Quaternion.Euler(0f, yaw, 0f);
+        }
+
+        // the headline lands with the car
+        float head = Mathf.Clamp01((bestAnimT - 0.25f) / 0.35f);
+        float headEase = 1f - Mathf.Pow(1f - head, 3f);
+        bestHeadline.rectTransform.localScale = Vector3.one * Mathf.Lerp(1.7f, 1f, headEase);
+        bestHeadline.color = new Color(1f, 0.82f, 0.15f, head);
+
+        // the number is uncovered behind it, counting up
+        float count = Mathf.Clamp01((bestAnimT - 0.55f) / 1.15f);
+        int shown = Mathf.RoundToInt(Mathf.Lerp(0f, bestShownScore,
+            1f - Mathf.Pow(1f - count, 3f)));
+        bestNumber.text = shown.ToString();
+        bestNumber.color = new Color(1f, 1f, 1f, Mathf.Clamp01(count * 4f));
+        bestNumber.rectTransform.localScale = Vector3.one * (1f + (1f - count) * 0.22f);
+
+        if (bestAnimT > Cross + 0.3f)
+        {
+            bestHint.color = new Color(1f, 1f, 1f,
+                0.35f + 0.3f * Mathf.Sin(bestAnimT * 4f));
+        }
+    }
+
+    void CloseBestPanel()
+    {
+        if (bestAnimT < 1.1f) return;          // let the drift finish first
+        bestAnimT = -1f;
+        bestPanel.SetActive(false);
+        if (bestCar != null) { Destroy(bestCar); bestCar = null; }
+        audioMan.PlayTap();
+        ShowGameOver(bestPendingCause, bestPendingScore, true,
+                     bestPendingCoins, bestPendingBonus);
+    }
+
+    void LateUpdate()
+    {
+        TickBestRun();
+        TickGameOver();
     }
 
     bool OwnedCar(int i)
@@ -532,6 +762,9 @@ public class GameManager : MonoBehaviour
 
         EndFinishCinematic();
         ApplyLobbyTrack();
+        // whatever biome the last run ended in, the lobby starts over in the
+        // base one - the lighting and fog have to come back with it
+        ResetBiome();
         car.baseSpeed = lobbyCruiseSpeed;
         car.maxSpeed = lobbyCruiseSpeed;
         car.speedGainPerSecond = 0f;
@@ -554,7 +787,7 @@ public class GameManager : MonoBehaviour
             loginRewardText.text = loginAlreadyClaimed ? "COME BACK TOMORROW!"
                                                        : "+" + loginRewardCoins + " COINS";
             loginCarText.gameObject.SetActive(loginUnlocksCar);
-            if (loginUnlocksCar) loginCarText.text = "NEW CAR UNLOCKED - " + Cars[RewardCarIndex].name + "!";
+            if (loginUnlocksCar) loginCarText.text = "NEW CAR!\n" + Cars[RewardCarIndex].name;
             claimBtnLabel.text = loginAlreadyClaimed ? "OK" : "CLAIM";
 
             bool rewardOwned = OwnedCar(RewardCarIndex);
@@ -568,9 +801,10 @@ public class GameManager : MonoBehaviour
                                     : new Color(0.24f, 0.19f, 0.36f);
                 loginCellTexts[i].color = current ? Color.white
                                         : new Color(1f, 1f, 1f, past ? 0.75f : 0.55f);
-                loginCellIcons[i].texture = (i == 6 && !rewardOwned) ? rewardCarRT : coinRT;
+                loginCellIcons[i].texture = (i == 6 && !rewardOwned)
+                    ? (Texture)rewardCarRT : Resources.Load<Texture2D>(CoinIconPath);
             }
-            loginCellTexts[6].text = rewardOwned ? "+500" : "FREE CAR";
+            loginCellTexts[6].text = rewardOwned ? "+500" : "CAR";
 
             loginPanel.SetActive(true);
             if (audioMan != null) audioMan.PlayPop();
@@ -646,6 +880,7 @@ public class GameManager : MonoBehaviour
             audioMan.engineVolume = 0.30f * volEngine;
             audioMan.skidVolume = 0.55f * volDrift;
             audioMan.coinVolume = 0.70f * volCoins;
+            audioMan.oneShotVolume = 0.90f * volSfx;
         }
         if (car != null)
         {
@@ -661,6 +896,36 @@ public class GameManager : MonoBehaviour
             }
             car.invertSteering = invertSteer == 1;
         }
+    }
+
+    GameObject settingsAudioTab, settingsGeneralTab, settingsCreditsTab;
+    Text settingsTabAudio, settingsTabGeneral, settingsTabCredits;
+
+    const string CreditsText =
+        "DRIFTLINE ETERNAL\nby MEIND GAMES\n\n" +
+        "3D MODELS\n\n" +
+        "Midnight Black Horse - Sketchfab\n" +
+        "Lightning Bolt - Sketchfab\n" +
+        "Keys - Sketchfab\n" +
+        "Charging Bull - Sketchfab\n\n" +
+        "Nature Pack - Quaternius\n" +
+        "Low Poly Car Pack - Designersoup\n\n" +
+        "AUDIO\n\n" +
+        "Music and sound effects\ncreated for this game\n\n" +
+        "All models used under their\nrespective licenses.";
+
+    void SetSettingsTab(int tab)
+    {
+        settingsAudioTab.SetActive(tab == 0);
+        settingsGeneralTab.SetActive(tab == 1);
+        settingsCreditsTab.SetActive(tab == 2);
+
+        var on = new Color(1f, 0.78f, 0.2f);
+        var off = new Color(1f, 1f, 1f, 0.55f);
+        settingsTabAudio.color = tab == 0 ? on : off;
+        settingsTabGeneral.color = tab == 1 ? on : off;
+        settingsTabCredits.color = tab == 2 ? on : off;
+        if (audioMan != null) audioMan.PlayTap();
     }
 
     void ToggleInvert()
@@ -683,6 +948,25 @@ public class GameManager : MonoBehaviour
     void SetDriftVol(float v) { volDrift = v; PlayerPrefs.SetFloat("VolDrift", v); ApplySettings(); }
     void SetCoinVol(float v) { volCoins = v; PlayerPrefs.SetFloat("VolCoins", v); ApplySettings(); }
     void SetSensitivity(float v) { sensSetting = v; PlayerPrefs.SetFloat("Sensitivity", v); ApplySettings(); }
+    void SetSfxVol(float v) { volSfx = v; PlayerPrefs.SetFloat("VolSfx", v); ApplySettings(); }
+
+    /// <summary>Speed in whichever unit the player picked, with its label.</summary>
+    string SpeedLabel(float metresPerSecond)
+    {
+        return useMph
+            ? Mathf.RoundToInt(metresPerSecond * 2.23694f) + " MPH"
+            : Mathf.RoundToInt(metresPerSecond * 3.6f) + " KM/H";
+    }
+
+    void ToggleUnits()
+    {
+        useMph = !useMph;
+        PlayerPrefs.SetInt("UseMph", useMph ? 1 : 0);
+        unitsBtnLabel.text = UnitsLabel();
+        audioMan.PlayTap();
+    }
+
+    string UnitsLabel() { return "SPEED: " + (useMph ? "MPH" : "KM/H"); }
 
     // --------------------------------------------------------------- garage
 
@@ -724,7 +1008,6 @@ public class GameManager : MonoBehaviour
     // shop 3D showcase: animated toolbox + tire stack icons
     GameObject shopShowcaseRoot;
     RenderTexture toolboxRT, tokenBoxRT;
-    readonly RenderTexture[] tokenIconRTs = new RenderTexture[5];
     GameObject tokenBoxRoot;
     ToolboxAnimator tokenBoxAnim;
     RawImage tokenBoxImage;
@@ -746,8 +1029,6 @@ public class GameManager : MonoBehaviour
     GameObject toolboxRoot, boxPrizeGo;
 
     // static currency icons rendered once from the real 3D models
-    GameObject iconShowcaseRoot;
-    RenderTexture coinIconRT, tireIconRT;
     RawImage garagePriceIcon;
     Text[] questRowTexts = new Text[3];
 
@@ -766,7 +1047,7 @@ public class GameManager : MonoBehaviour
         new Color(0.35f, 1f, 0.45f),   // springs
     };
     Text questMultText, questTiresText, pauseQuestText, itemHudText, multHudText;
-    Text reviveTireLabel, reviveAdLabel, reviveTimerText;
+    Text reviveTireLabel, reviveAdLabel, reviveTimerText, reviveHaveText;
 
     [Tooltip("Seconds the player has to decide whether to revive.")]
     public float reviveDecisionTime = 5f;
@@ -777,7 +1058,9 @@ public class GameManager : MonoBehaviour
         get { return Mathf.Min(30, 1 + questLevel) * (doubleScoreT > 0f ? 2 : 1); }
     }
 
-    int ReviveTireCost { get { return 5 * (1 << Mathf.Min(revivesThisRun, 8)); } }
+    // 1, 2, 4, 8... - the first save of a run is nearly free, and each one
+    // after it costs as much as everything before it put together
+    int ReviveTireCost { get { return 1 << Mathf.Min(revivesThisRun, 9); } }
 
     void LoadQuests()
     {
@@ -884,7 +1167,9 @@ public class GameManager : MonoBehaviour
 
     // ------------------------------------------------- day -> night city
     bool nightAnnounced, snowAnnounced;
-    float nextCycleScore;
+    float nextCycleTime;
+    float runTime;
+    bool snowRunInDone, cityRunInDone, mountainShown;
     float biomeBlend;          // 0 = day forest, 1 = night city
     float snowBlend;           // 0 = city, 1 = snowy mountains
     Light sunLight;
@@ -892,9 +1177,17 @@ public class GameManager : MonoBehaviour
     float sunDayIntensity;
     Color ambientDay;
 
+    bool lightingCached;
+
+    /// <summary>
+    /// Remembers what daylight looks like, ONCE. Every later biome colour is
+    /// mixed from these values, so re-reading them while the world happens to
+    /// be lit for night or snow would bake that lighting in as the new
+    /// daytime and there would be no way back.
+    /// </summary>
     void CacheLighting()
     {
-        if (sunLight != null) return;
+        if (lightingCached) return;
         foreach (var l in FindObjectsByType<Light>(FindObjectsSortMode.None))
         {
             if (l.type == LightType.Directional) { sunLight = l; break; }
@@ -905,6 +1198,7 @@ public class GameManager : MonoBehaviour
             sunDayIntensity = sunLight.intensity;
         }
         ambientDay = RenderSettings.ambientLight;
+        lightingCached = true;
     }
 
     void ResetBiome()
@@ -914,7 +1208,11 @@ public class GameManager : MonoBehaviour
         snowAnnounced = false;
         cyclingStarted = false;
         cyclesDone = 0;
-        nextCycleScore = 0f;
+        nextCycleTime = 0f;
+        runTime = 0f;
+        snowRunInDone = false;
+        cityRunInDone = false;
+        mountainShown = false;
         biomeBlend = 0f;
         snowBlend = 0f;
         ApplyBiomeVisuals(0f);
@@ -1011,7 +1309,7 @@ public class GameManager : MonoBehaviour
     {
         int lv = RaceMode.Level(u);
         string value = u == RaceMode.Upgrade.CoinBonus ? RaceMode.CoinBonusLabel()
-                     : u == RaceMode.Upgrade.Speed ? "+" + Mathf.RoundToInt(RaceMode.SpeedBonus() * 3.6f) + " KM/H"
+                     : u == RaceMode.Upgrade.Speed ? "+" + Mathf.RoundToInt(RaceMode.SpeedBonus() * (useMph ? 2.23694f : 3.6f)) + (useMph ? " MPH" : " KM/H")
                      : "+" + Mathf.RoundToInt(RaceMode.Strength() * 100f) + "%";
         string cost = RaceMode.IsMaxed(u) ? "MAX" : RaceMode.CostOf(u).ToString();
         // the picture carries the meaning, so the text just states the numbers
@@ -1068,21 +1366,29 @@ public class GameManager : MonoBehaviour
         track.spawnBoostPads = true;
         track.roadWidth = raceRoadWidth;     // three proper lanes to fight over
         track.roadBehindStart = 8f;          // no empty road visible behind the grid
-        track.Init(startPos, startYaw);      // regenerate without hazards
-        car.ResetRun(track);
-        if (camFollow != null) camFollow.SnapToTarget();
+        track.flatTrack = true;              // a level circuit, whatever the biome
 
-        StartRun();
-
-        // lock the world to this level's biome
+        // The biome goes in with the build request: Init generates the opening
+        // stretch immediately, so a race in the city or the snow has to be
+        // told before the track exists, not after.
         RaceMode.BlendsForBiome(RaceMode.BiomeOf(level), out float dayNight, out float snow);
         biomeBlend = dayNight;
         snowBlend = snow;
         nightAnnounced = snowAnnounced = true;   // no mid-race banners
         cyclingStarted = false;
         ApplyBiomeVisuals(biomeBlend);
+
+        track.Init(startPos, startYaw, dayNight, snow);
+        car.ResetRun(track);
+        if (camFollow != null) camFollow.SnapToTarget();
+
+        StartRun();
+
+        // and hold that biome for the whole race - nothing cycles it
         track.SetBiomeBlend(dayNight);
         track.SetSnowBlend(snow);
+        biomeBlend = dayNight;
+        snowBlend = snow;
 
         // a race is a straight fight: no coins, power-ups, tires or obstacles
         // scattered around, just the track and the field
@@ -1117,6 +1423,13 @@ public class GameManager : MonoBehaviour
     {
         int carIdx = 1 + ((index * 3 + raceLevel) % (Cars.Length - 1));
         if (carIdx == selectedCar) carIdx = 1 + (carIdx % (Cars.Length - 1));
+
+        // the code-only car is not part of the world - it never lines up on a
+        // grid, however the index happens to land
+        for (int guard = 0; guard < Cars.Length && DevOnlyCar(carIdx); guard++)
+        {
+            carIdx = 1 + (carIdx % (Cars.Length - 1));
+        }
 
         CarDef d = Cars[carIdx];
         // a few models in the pack are authored nose-backwards
@@ -1183,8 +1496,9 @@ public class GameManager : MonoBehaviour
         // the gantry lights fill up red as the count runs down
         if (mode == Mode.Race)
         {
-            int lit = Mathf.Clamp(Mathf.CeilToInt((3f - raceCountdown) / 3f * 5f), 0, 5);
-            track.SetStartLights(lit, false);
+            // one row per number: 3 lights the top row, 2 the next, 1 the third
+            int rows = Mathf.Clamp(4 - Mathf.CeilToInt(raceCountdown), 0, 3);
+            track.SetStartLights(rows, false);
         }
         if (countdownText.text != label)
         {
@@ -1247,22 +1561,33 @@ public class GameManager : MonoBehaviour
         public Color color;
         public int weight;
 
-        public WheelSlot(SpinPrize k, int amt, string text, Color c, int w)
+        // which token a token slice pays out - so the emblem drawn on the
+        // slice is the one you actually win
+        public Currency currency;
+
+        public WheelSlot(SpinPrize k, int amt, string text, Color c, int w,
+                         Currency cur = Currency.Coins)
         {
             kind = k; amount = amt; label = text; color = c; weight = w;
+            currency = cur;
         }
     }
 
     static readonly WheelSlot[] Wheel =
     {
+        // Every token has a slice of its own - four marques, four emblems.
+        // Their weights together come to about what the two generic token
+        // slices used to be worth, so tokens are no more common than before.
         new WheelSlot(SpinPrize.Coins,   500,  "500",  new Color(0.95f,0.72f,0.15f), 26),
         new WheelSlot(SpinPrize.Tires,     3,  "3",    new Color(0.35f,0.62f,0.92f), 18),
+        new WheelSlot(SpinPrize.Tokens,    5,  "5",    new Color(0.62f,0.50f,0.16f),  7, Currency.Cyber),
         new WheelSlot(SpinPrize.Coins,  2000,  "2000", new Color(0.98f,0.55f,0.18f), 16),
-        new WheelSlot(SpinPrize.Tokens,    5,  "5",   new Color(0.55f,0.35f,0.85f), 12),
-        new WheelSlot(SpinPrize.Coins,  8000,  "8000", new Color(0.92f,0.40f,0.30f),  8),
+        new WheelSlot(SpinPrize.Tokens,    4,  "4",    new Color(0.50f,0.31f,0.15f),  5, Currency.Tempasta),
         new WheelSlot(SpinPrize.Tires,    10,  "10",   new Color(0.22f,0.70f,0.78f),  8),
-        new WheelSlot(SpinPrize.Tokens,   20,  "20",  new Color(0.42f,0.28f,0.72f),  6),
-        new WheelSlot(SpinPrize.Car,       0,  "CAR",new Color(0.20f,0.78f,0.42f),  1),
+        new WheelSlot(SpinPrize.Tokens,    3,  "3",    new Color(0.58f,0.24f,0.42f),  4, Currency.Caldera),
+        new WheelSlot(SpinPrize.Coins,  8000,  "8000", new Color(0.92f,0.40f,0.30f),  8),
+        new WheelSlot(SpinPrize.Tokens,    2,  "2",    new Color(0.38f,0.40f,0.48f),  3, Currency.Vettura),
+        new WheelSlot(SpinPrize.Car,       0,  "CAR",  new Color(0.20f,0.78f,0.42f),  1),
     };
 
     const int DailySpins = 2;
@@ -1270,6 +1595,8 @@ public class GameManager : MonoBehaviour
     RectTransform wheelDisc;
     Text wheelSpinsText, wheelResultText, spinMenuLabel, wheelSpinLabel, wheelAdLabel;
     float wheelAngle, wheelFrom, wheelTo, wheelT, wheelDuration;
+    int lastWheelTick;
+    const int WheelPegsPerSlice = 1;
     bool wheelSpinning;
     int wheelResultIndex = -1;
 
@@ -1339,12 +1666,51 @@ public class GameManager : MonoBehaviour
         if (spinMenuLabel == null) return;
         int left = SpinsLeft;
         spinMenuLabel.text = left > 0 ? "SPIN  " + left : "SPIN";
+
         var img = spinMenuLabel.transform.parent.GetComponent<Image>();
         if (img != null)
         {
-            img.color = left > 0 ? new Color(0.55f, 0.30f, 0.85f)
+            // gold and lively while there is a spin waiting, grey once used
+            img.color = left > 0 ? new Color(1f, 0.78f, 0.12f)
                                  : new Color(0.35f, 0.32f, 0.45f);
         }
+        spinMenuLabel.color = Color.white;
+
+        if (spinButtonRt == null)
+        {
+            spinButtonRt = spinMenuLabel.transform.parent as RectTransform;
+            if (spinButtonRt != null) spinButtonHome = spinButtonRt.anchoredPosition;
+        }
+        if (left <= 0 && spinButtonRt != null)
+        {
+            spinButtonRt.anchoredPosition = spinButtonHome;
+            spinButtonRt.localScale = Vector3.one;
+            spinButtonRt.localRotation = Quaternion.identity;
+        }
+    }
+
+    RectTransform spinButtonRt;
+    Vector2 spinButtonHome;
+
+    /// <summary>
+    /// Nudges the spin button about while a spin is unclaimed - a small,
+    /// constant motion in the corner of the eye is what actually gets it
+    /// noticed among six identical buttons.
+    /// </summary>
+    void AnimateSpinButton()
+    {
+        if (spinButtonRt == null || SpinsLeft <= 0) return;
+
+        float t = Time.unscaledTime;
+        // a slow breath with a quick double-bounce every few seconds
+        float beat = Mathf.Repeat(t, 2.6f);
+        float pop = beat < 0.5f ? Mathf.Sin(beat / 0.5f * Mathf.PI * 2f) : 0f;
+
+        spinButtonRt.anchoredPosition = spinButtonHome
+            + new Vector2(0f, Mathf.Sin(t * 2.2f) * 4f + pop * 9f);
+        spinButtonRt.localScale = Vector3.one * (1f + Mathf.Sin(t * 2.2f) * 0.015f
+                                                    + Mathf.Abs(pop) * 0.05f);
+        spinButtonRt.localRotation = Quaternion.Euler(0f, 0f, pop * 2.5f);
     }
 
     const int SpinTireCost = 5;
@@ -1423,6 +1789,8 @@ public class GameManager : MonoBehaviour
         while (wheelTo < wheelFrom + 2520f) wheelTo += 360f;
         wheelT = 0f;
         wheelDuration = 5.6f;
+        lastWheelTick = Mathf.FloorToInt(
+            wheelAngle / (360f / (Wheel.Length * WheelPegsPerSlice)));
         wheelResultIndex = idx;
         wheelSpinning = true;
         RefreshWheel();
@@ -1495,6 +1863,17 @@ public class GameManager : MonoBehaviour
         wheelAngle = Mathf.Lerp(wheelFrom, wheelTo, eased);
         wheelDisc.localRotation = Quaternion.Euler(0f, 0f, wheelAngle);
 
+        // one click every time a new slice passes the pointer - it slows down
+        // with the wheel, which is the whole sound of a real prize wheel
+        float pegSpacing = 360f / (Wheel.Length * WheelPegsPerSlice);
+        int tick = Mathf.FloorToInt(wheelAngle / pegSpacing);
+        if (tick != lastWheelTick)
+        {
+            lastWheelTick = tick;
+            audioMan.PlayWheelTick(1.25f - 0.35f * p + Random.Range(-0.03f, 0.03f),
+                                   0.7f + 0.3f * p);
+        }
+
         if (p < 1f) return;
 
         wheelSpinning = false;
@@ -1525,7 +1904,8 @@ public class GameManager : MonoBehaviour
 
             case SpinPrize.Tokens:
             {
-                var cur = (Currency)Random.Range(1, 5);
+                Currency cur = s.currency == Currency.Coins
+                    ? (Currency)Random.Range(1, 5) : s.currency;
                 SetToken(cur, GetToken(cur) + s.amount);
                 msg = "+" + s.amount + " " + TokenNames[(int)cur];
                 col = TokenColors[(int)cur];
@@ -1556,7 +1936,7 @@ public class GameManager : MonoBehaviour
         wheelResultText.color = col;
         menuCoinsText.text = "COINS  " + totalCoins;
         // the wheel gets the same full-screen celebration as the boxes
-        ShowPrizeReveal(msg, s.kind == SpinPrize.Tokens);
+        ShowPrizeReveal(msg, s.kind == SpinPrize.Tokens, WheelIconPath(s));
     }
 
     /// <summary>A coin-priced car the player does not own yet.</summary>
@@ -1572,13 +1952,16 @@ public class GameManager : MonoBehaviour
         return pool.Count == 0 ? -1 : pool[Random.Range(0, pool.Count)];
     }
 
-    static string WheelIconPath(SpinPrize kind)
+    static string WheelIconPath(WheelSlot slot)
     {
-        switch (kind)
+        switch (slot.kind)
         {
             case SpinPrize.Coins: return "UI/wheel_coins";
             case SpinPrize.Tires: return "UI/wheel_tires";
-            case SpinPrize.Tokens: return "UI/wheel_token";
+            case SpinPrize.Tokens:
+                // each token slice wears its own emblem
+                return slot.currency == Currency.Coins
+                    ? "UI/wheel_token" : TokenIcons[(int)slot.currency];
             default: return "UI/wheel_car";
         }
     }
@@ -1700,18 +2083,19 @@ public class GameManager : MonoBehaviour
             icoGo.transform.SetParent(discGo.transform, false);
             var ico = icoGo.AddComponent<RawImage>();
             ico.raycastTarget = false;
-            ico.texture = Resources.Load<Texture2D>(WheelIconPath(Wheel[i].kind));
+            ico.texture = Resources.Load<Texture2D>(WheelIconPath(Wheel[i]));
             var icoRt = ico.rectTransform;
             icoRt.anchorMin = icoRt.anchorMax = icoRt.pivot = new Vector2(0.5f, 0.5f);
-            icoRt.anchoredPosition = at * 288f;
-            icoRt.sizeDelta = new Vector2(104f, 104f);
+            // well inside the rim: at 288 the art ran off the edge of the disc
+            icoRt.anchoredPosition = at * 238f;
+            icoRt.sizeDelta = new Vector2(92f, 92f);
             icoRt.localRotation = Quaternion.Euler(0f, 0f, -ang);
 
             var label = MakeText(discGo.transform, "Slice" + i, 36, TextAnchor.MiddleCenter,
-                new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(190f, 70f));
+                new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(190f, 70f), true);
             label.text = Wheel[i].label;
             label.color = Color.white;
-            label.rectTransform.anchoredPosition = at * 186f;
+            label.rectTransform.anchoredPosition = at * 152f;
             label.rectTransform.localRotation = Quaternion.Euler(0f, 0f, -ang);
         }
 
@@ -1917,7 +2301,7 @@ public class GameManager : MonoBehaviour
         }
         else
         {
-            centerText.gameObject.SetActive(true);
+            // the results card was already filled in by ShowGameOver
             gameOverPanel.SetActive(true);
         }
     }
@@ -1935,6 +2319,9 @@ public class GameManager : MonoBehaviour
         track.spawnPowerUps = true;
         track.spawnTirePickups = true;
         track.ResumeSpawnsAt(car.DistanceTraveled + 120f);
+        // the camera is behind the car from here on, so the world no longer
+        // needs to be kept alive way back down the road
+        track.behindDistance = runBehindDistance;
     }
 
     void TickRace(float dt)
@@ -2000,8 +2387,8 @@ public class GameManager : MonoBehaviour
     // after the scripted forest -> sunset -> city -> snow run, the world
     // keeps changing: back to forest, then a random biome each cycle
     [Header("Biome cycling")]
-    [Tooltip("Score between biome changes once the first full cycle is done.")]
-    public int biomeCycleScore = 14000;
+    [Tooltip("Seconds between biome changes once the first full cycle is done.")]
+    public float biomeCycleSeconds = 100f;
 
     int cyclesDone;
     float targetDayNight, targetSnow;
@@ -2023,16 +2410,49 @@ public class GameManager : MonoBehaviour
     void TickBiome(float dt)
     {
         // --- scripted opening: day -> sunset -> night city
-        float from = nightCityScore * sunsetStartFraction;
-        float target = Mathf.Clamp01(Mathf.InverseLerp(from, nightCityScore, score));
+        // The world changes on the CLOCK, not on score, so a cautious player
+        // and a fast one see the same journey at the same pace.
+        runTime += dt;
+        float target = Mathf.Clamp01(
+            Mathf.InverseLerp(sunsetAtSeconds, cityAtSeconds, runTime));
 
-        // --- then the climb into the mountains
-        float snowFrom = snowScore * snowStartFraction;
-        float snowTarget = Mathf.Clamp01(Mathf.InverseLerp(snowFrom, snowScore, score));
+        // --- leaving the city: forest again, with the mountain on the horizon
+        float approachAt = cityAtSeconds + 20f;
+        float climbAt = snowAtSeconds - 30f;
+        if (!mountainShown && !cyclingStarted && runTime >= approachAt)
+        {
+            mountainShown = true;
+            // a clean straight to come out of the city onto
+            track.RequestStraightFor(200f);
+            track.RequestFlatFor(200f);
+        }
+
+        // --- then the climb itself. Nothing turns white until the car is at
+        // the foot of the mountain it has been driving toward.
+        float snowTarget = Mathf.Clamp01(
+            Mathf.InverseLerp(climbAt, snowAtSeconds, runTime));
+
+        // Each biome gets a clean straight to arrive on, so one never starts
+        // in the middle of the last one's scenery.
+        if (!cityRunInDone && target > 0.6f)
+        {
+            cityRunInDone = true;
+            track.RequestStraightFor(200f);
+            track.RequestFlatFor(200f);
+        }
+        if (!snowRunInDone && snowTarget > 0.01f)
+        {
+            snowRunInDone = true;
+            track.RequestStraightFor(260f);
+            track.RequestFlatFor(260f);
+        }
 
         if (!cyclingStarted)
         {
-            if (target > biomeBlend) biomeBlend = Mathf.MoveTowards(biomeBlend, target, dt * 0.25f);
+            // the city falls behind and daylight comes back for the run at
+            // the mountain, so the approach is green forest, not night
+            if (mountainShown) biomeBlend = Mathf.MoveTowards(biomeBlend, 0f, dt * 0.3f);
+            else if (target > biomeBlend) biomeBlend = Mathf.MoveTowards(biomeBlend, target, dt * 0.25f);
             if (snowTarget > snowBlend) snowBlend = Mathf.MoveTowards(snowBlend, snowTarget, dt * 0.2f);
 
             if (!nightAnnounced && biomeBlend > 0.92f)
@@ -2047,16 +2467,19 @@ public class GameManager : MonoBehaviour
                 cyclingStarted = true;          // the world starts looping now
                 targetDayNight = biomeBlend;
                 targetSnow = snowBlend;
-                nextCycleScore = score + biomeCycleScore;
+                nextCycleTime = runTime + biomeCycleSeconds;
             }
         }
         else
         {
             // --- endless variety: ease toward whichever biome is next
-            if (score >= nextCycleScore)
+            if (runTime >= nextCycleTime)
             {
-                nextCycleScore = score + biomeCycleScore;
+                nextCycleTime = runTime + biomeCycleSeconds;
                 PickNextBiome();
+                // every change of scene starts on a clean, level straight
+                track.RequestStraightFor(220f);
+                track.RequestFlatFor(220f);
             }
             biomeBlend = Mathf.MoveTowards(biomeBlend, targetDayNight, dt * 0.22f);
             snowBlend = Mathf.MoveTowards(snowBlend, targetSnow, dt * 0.2f);
@@ -2071,6 +2494,28 @@ public class GameManager : MonoBehaviour
     bool introRunning = true;
     bool introSeen;            // the title sequence has actually appeared
     Text menuTitle, menuSubTitle;
+    float titleFadeT;
+
+    /// <summary>Brings the lobby title up as the intro's copy fades away.</summary>
+    void FadeInMenuTitle()
+    {
+        titleFadeT += Time.unscaledDeltaTime;
+        SetMenuTitleAlpha(Mathf.Clamp01(titleFadeT / 0.25f));
+    }
+
+    void SetMenuTitleAlpha(float a)
+    {
+        if (menuTitle != null)
+        {
+            Color c = menuTitle.color;
+            menuTitle.color = new Color(c.r, c.g, c.b, a);
+        }
+        if (menuSubTitle != null)
+        {
+            Color c = menuSubTitle.color;
+            menuSubTitle.color = new Color(c.r, c.g, c.b, a);
+        }
+    }
 
     // ------------------------------------------ DocLorean time-travel powerup
     bool rewindUsed;
@@ -2300,51 +2745,62 @@ public class GameManager : MonoBehaviour
         return root;
     }
 
-    /// <summary>Builds a token's 3D model (or a fallback gem) at a position.</summary>
-    GameObject BuildTokenModel(Currency cur, Transform parent, Vector3 pos, float targetSize)
+    /// <summary>
+    /// A token, as a flat emblem standing upright in the world. Both box
+    /// cameras look down the -z axis at their box, so a face pointing +z is
+    /// square to the camera and the art is never mirrored.
+    /// </summary>
+    GameObject BuildTokenIcon(Currency cur, Transform parent, Vector3 pos, float targetSize)
     {
-        var root = new GameObject("Token_" + cur);
+        return BuildIconObject(TokenIcons[(int)cur], TokenColors[(int)cur],
+                               parent, pos, targetSize);
+    }
+
+    GameObject BuildIconObject(string iconPath, Color fallback,
+                               Transform parent, Vector3 pos, float targetSize)
+    {
+        var root = new GameObject("Icon");
         root.transform.SetParent(parent, false);
         root.transform.position = pos;
 
-        Shader sh = Shader.Find("Universal Render Pipeline/Lit");
-        if (sh == null) sh = Shader.Find("Standard");
-        var mat = new Material(sh) { color = TokenModelColors[(int)cur] };
-        // the black horse needs gloss rather than metal to read as a shape
-        bool isBlack = cur == Currency.Vettura;
-        if (mat.HasProperty("_Metallic")) mat.SetFloat("_Metallic", isBlack ? 0.35f : 0.8f);
-        if (mat.HasProperty("_Smoothness")) mat.SetFloat("_Smoothness", isBlack ? 0.75f : 0.6f);
+        Texture2D tex = Resources.Load<Texture2D>(iconPath);
 
-        GameObject prefab = Resources.Load<GameObject>(TokenModels[(int)cur]);
-        if (prefab != null)
-        {
-            GameObject m = Instantiate(prefab, root.transform);
-            m.transform.localPosition = Vector3.zero;
-            m.transform.localRotation = Quaternion.identity;
-            var rends = m.GetComponentsInChildren<Renderer>();
-            if (rends.Length > 0)
-            {
-                foreach (var r in rends) r.sharedMaterial = mat;
-                Bounds b = rends[0].bounds;
-                for (int i = 1; i < rends.Length; i++) b.Encapsulate(rends[i].bounds);
-                float k = targetSize / Mathf.Max(b.size.x, b.size.y, b.size.z, 0.001f);
-                m.transform.localScale = m.transform.localScale * k;
-                Vector3 c = root.transform.InverseTransformPoint(b.center);
-                m.transform.localPosition = -c * k;
-            }
-        }
-        else
-        {
-            // fallback: faceted gem in the token's colour
-            var go = GameObject.CreatePrimitive(PrimitiveType.Cube);
-            Destroy(go.GetComponent<Collider>());
-            go.transform.SetParent(root.transform, false);
-            go.transform.position = pos;
-            go.transform.rotation = Quaternion.Euler(35f, 0f, 45f);
-            go.transform.localScale = Vector3.one * targetSize * 0.72f;
-            go.GetComponent<MeshRenderer>().sharedMaterial = mat;
-        }
+        Shader sh = Shader.Find("Sprites/Default");
+        if (sh == null) sh = Shader.Find("Unlit/Transparent");
+        var mat = new Material(sh);
+        if (tex != null) mat.mainTexture = tex;
+        else mat.color = fallback;
+        mat.renderQueue = 3000;
+
+        var quad = new GameObject("Face");
+        quad.transform.SetParent(root.transform, false);
+        quad.AddComponent<MeshFilter>().sharedMesh = MakeIconMesh(targetSize);
+        var mr = quad.AddComponent<MeshRenderer>();
+        mr.sharedMaterial = mat;
+        mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+        mr.receiveShadows = false;
         return root;
+    }
+
+    /// <summary>A square facing +z, wound by hand so the facing is certain.</summary>
+    static Mesh MakeIconMesh(float size)
+    {
+        float h = size * 0.5f;
+        var mesh = new Mesh();
+        mesh.vertices = new[]
+        {
+            new Vector3(-h, -h, 0f), new Vector3(h, -h, 0f),
+            new Vector3(-h,  h, 0f), new Vector3(h,  h, 0f),
+        };
+        mesh.uv = new[]
+        {
+            new Vector2(0f, 0f), new Vector2(1f, 0f),
+            new Vector2(0f, 1f), new Vector2(1f, 1f),
+        };
+        mesh.triangles = new[] { 0, 1, 2, 2, 1, 3 };
+        mesh.RecalculateNormals();
+        mesh.RecalculateBounds();
+        return mesh;
     }
 
     void EnsureShopShowcase()
@@ -2491,16 +2947,8 @@ public class GameManager : MonoBehaviour
         MakeShowcaseCam(shopShowcaseRoot.transform,
             tbPos + new Vector3(0f, 1.9f, 3.2f), tbPos + Vector3.up * 0.75f, tokenBoxRT);
 
-        // --- token icons for the garage prices
-        for (int t = 1; t < 5; t++)
-        {
-            Vector3 p = new Vector3(420f + t * 25f, -400f, 0f);
-            GameObject tok = BuildTokenModel((Currency)t, shopShowcaseRoot.transform, p, 1f);
-            tok.AddComponent<Coin>().spinSpeed = 45f;
-            tokenIconRTs[t] = new RenderTexture(192, 192, 16);
-            MakeShowcaseCam(shopShowcaseRoot.transform,
-                p + new Vector3(0f, 0.15f, -2.1f), p, tokenIconRTs[t]);
-        }
+        // Garage prices draw their token straight from the 2D art - no
+        // stage, no camera and no render texture needed for a flat image.
 
         SetLayerRecursively(shopShowcaseRoot, ShowcaseLayer);
         shopShowcaseRoot.SetActive(false);
@@ -2517,34 +2965,6 @@ public class GameManager : MonoBehaviour
         go.transform.localScale = scale;
         go.GetComponent<MeshRenderer>().sharedMaterial = mat;
         return go;
-    }
-
-    void BuildIconShowcase()
-    {
-        if (iconShowcaseRoot != null) return;
-        iconShowcaseRoot = new GameObject("IconShowcase");
-
-        Vector3 coinPos = new Vector3(-80f, -400f, 0f);
-        GameObject coin = track.BuildCoinDisplay(coinPos, iconShowcaseRoot.transform);
-        Destroy(coin.GetComponent<Coin>()); // static, no spin
-        coin.transform.rotation = Quaternion.Euler(8f, 35f, 0f);
-
-        Vector3 tirePos = new Vector3(-120f, -400f, 0f);
-        GameObject tire = BuildTireModel(iconShowcaseRoot.transform, tirePos);
-        tire.transform.rotation = Quaternion.Euler(-70f, 25f, 0f); // face the camera
-
-        coinIconRT = new RenderTexture(128, 128, 16);
-        tireIconRT = new RenderTexture(128, 128, 16);
-        // pulled back far enough that the models always fit, aimed a touch
-        // low so they sit high in the frame. Cameras stay on - two tiny
-        // 128px renders cost nothing and it guarantees the icons show up.
-        MakeShowcaseCam(iconShowcaseRoot.transform,
-            coinPos + new Vector3(0f, 0f, -2.0f), coinPos + Vector3.down * 0.1f, coinIconRT);
-        MakeShowcaseCam(iconShowcaseRoot.transform,
-            tirePos + new Vector3(0f, 0f, -2.1f), tirePos + Vector3.down * 0.1f, tireIconRT);
-
-        SetLayerRecursively(iconShowcaseRoot, ShowcaseLayer);
-        if (mainCam != null) mainCam.cullingMask &= ~(1 << ShowcaseLayer);
     }
 
     void OpenShop()
@@ -2711,10 +3131,10 @@ public class GameManager : MonoBehaviour
         bool prizeToken = pendingBoxCurrency != Currency.Coins && !prizeTires;
         Vector3 inBox = toolboxRoot.transform.position + Vector3.up * 0.25f;
         boxPrizeGo = prizeToken
-            ? BuildTokenModel(pendingBoxCurrency, toolboxRoot.transform, inBox, 0.55f)
-            : prizeTires
-                ? BuildTireModel(toolboxRoot.transform, inBox)
-                : track.BuildCoinDisplay(inBox, toolboxRoot.transform);
+            ? BuildTokenIcon(pendingBoxCurrency, toolboxRoot.transform, inBox, 0.9f)
+            : BuildIconObject(prizeTires ? TireIconPath : CoinIconPath,
+                              prizeTires ? Color.white : new Color(1f, 0.82f, 0.1f),
+                              toolboxRoot.transform, inBox, 0.9f);
         boxPrizeGo.transform.localScale = Vector3.one * 0.55f;
         SetLayerRecursively(boxPrizeGo, ShowcaseLayer);
         toolboxAnim.prizeItem = boxPrizeGo.transform;
@@ -2853,7 +3273,8 @@ public class GameManager : MonoBehaviour
             target.color = pendingBoxColor;
             RefreshShopCurrency();
             audioMan.PlayCoin();
-            ShowPrizeReveal(pendingBoxText, pendingBoxIsToken);
+            ShowPrizeReveal(pendingBoxText, pendingBoxIsToken,
+                pendingBoxIsToken ? TokenIcons[(int)pendingBoxCurrency] : null);
         }
         TickBoxFocus();
         TickPrizeReveal();
@@ -2949,7 +3370,7 @@ public class GameManager : MonoBehaviour
     }
 
     /// <summary>Throws the prize up on a bright full screen so it lands.</summary>
-    void ShowPrizeReveal(string text, bool tokenBox)
+    void ShowPrizeReveal(string text, bool tokenBox, string iconPath = null)
     {
         if (revealPanel == null) return;
 
@@ -2957,9 +3378,14 @@ public class GameManager : MonoBehaviour
         bool token = text.Contains("TOKEN");
         bool car = text.Contains("CAR");
 
-        revealIcon.texture = Resources.Load<Texture2D>(
-            car ? "UI/wheel_car" : token ? "UI/wheel_token"
-            : tires ? "UI/wheel_tires" : "UI/wheel_coins");
+        // the caller can name the exact emblem it just awarded; otherwise the
+        // prize is worked out from the message
+        if (string.IsNullOrEmpty(iconPath))
+        {
+            iconPath = car ? "UI/wheel_car" : token ? "UI/wheel_token"
+                     : tires ? "UI/wheel_tires" : "UI/wheel_coins";
+        }
+        revealIcon.texture = Resources.Load<Texture2D>(iconPath);
 
         // token boxes get the cool blue treatment, coin boxes the gold one
         revealTint = tokenBox || token ? new Color(0.20f, 0.62f, 1f)
@@ -3044,8 +3470,8 @@ public class GameManager : MonoBehaviour
 
         // spawn the token model inside the blue box so it rises out
         if (boxPrizeGo != null) Destroy(boxPrizeGo);
-        boxPrizeGo = BuildTokenModel(cur, tokenBoxRoot.transform,
-            tokenBoxRoot.transform.position + Vector3.up * 0.25f, 0.55f);
+        boxPrizeGo = BuildTokenIcon(cur, tokenBoxRoot.transform,
+            tokenBoxRoot.transform.position + Vector3.up * 0.25f, 0.9f);
         SetLayerRecursively(boxPrizeGo, ShowcaseLayer);
         tokenBoxAnim.prizeItem = boxPrizeGo.transform;
 
@@ -3365,6 +3791,51 @@ public class GameManager : MonoBehaviour
         if (garageStage != null) garageStage.SetActive(false);
     }
 
+    /// <summary>
+    /// Every material slot on every renderer, not just the first. Car models
+    /// are multi-material meshes - body, glass, lights, rubber - and setting
+    /// sharedMaterial only replaces slot zero, which is why the window frames,
+    /// headlights and tyres stayed pale.
+    /// </summary>
+    void BlackOut(Renderer[] rends)
+    {
+        Material black = LockedCarMaterial();
+        foreach (var r in rends)
+        {
+            if (r == null) continue;
+            var slots = new Material[Mathf.Max(1, r.sharedMaterials.Length)];
+            for (int i = 0; i < slots.Length; i++) slots[i] = black;
+            r.sharedMaterials = slots;
+        }
+    }
+
+    Material lockedCarMat;
+
+    Material LockedCarMaterial()
+    {
+        if (lockedCarMat != null) return lockedCarMat;
+
+        Shader sh = Shader.Find("Universal Render Pipeline/Unlit");
+        if (sh == null) sh = Shader.Find("Unlit/Color");
+        if (sh == null) sh = Shader.Find("Universal Render Pipeline/Lit");
+
+        lockedCarMat = new Material(sh);
+        var flat = new Color(0.035f, 0.035f, 0.05f, 1f);
+        lockedCarMat.color = flat;                       // legacy shaders
+        if (lockedCarMat.HasProperty("_BaseColor")) lockedCarMat.SetColor("_BaseColor", flat);
+        // belt and braces if only a lit shader was available
+        if (lockedCarMat.HasProperty("_Metallic")) lockedCarMat.SetFloat("_Metallic", 0f);
+        if (lockedCarMat.HasProperty("_Smoothness")) lockedCarMat.SetFloat("_Smoothness", 0f);
+        if (lockedCarMat.HasProperty("_Glossiness")) lockedCarMat.SetFloat("_Glossiness", 0f);
+        if (lockedCarMat.HasProperty("_SpecColor")) lockedCarMat.SetColor("_SpecColor", Color.black);
+        if (lockedCarMat.HasProperty("_EmissionColor"))
+        {
+            lockedCarMat.DisableKeyword("_EMISSION");
+            lockedCarMat.SetColor("_EmissionColor", Color.black);
+        }
+        return lockedCarMat;
+    }
+
     GameObject BuildPreviewModel(int idx)
     {
         CarDef d = Cars[idx];
@@ -3420,14 +3891,13 @@ public class GameManager : MonoBehaviour
         float k = 2.2f / footprint;
         root.transform.localScale = Vector3.one * k;
 
-        // locked cars show as black silhouettes
-        if (!OwnedCar(idx))
-        {
-            foreach (var r in rends)
-            {
-                r.material.color = new Color(0.05f, 0.05f, 0.07f);
-            }
-        }
+        // Locked cars are pure silhouettes. Tinting the existing materials
+        // black was not enough: they keep their metallic sheen and their
+        // smoothness, so the highlights still traced out the whole shape, and
+        // any part with a bright unlit material - lights, badges, glass -
+        // stayed white. An unlit flat black on every renderer leaves nothing
+        // for the light to catch.
+        if (!OwnedCar(idx)) BlackOut(rends);
         return root;
     }
 
@@ -3737,7 +4207,7 @@ public class GameManager : MonoBehaviour
             // show that brand's token model beside the price
             EnsureShopShowcase();
             if (shopShowcaseRoot != null) shopShowcaseRoot.SetActive(true);
-            garagePriceIcon.texture = tokenIconRTs[(int)d.currency];
+            garagePriceIcon.texture = Resources.Load<Texture2D>(TokenIcons[(int)d.currency]);
             garagePriceIcon.gameObject.SetActive(true);
         }
         else
@@ -3745,7 +4215,7 @@ public class GameManager : MonoBehaviour
             shopPrice.text = d.cost.ToString();
             shopPrice.color = new Color(1f, 0.8f, 0.3f);
             shopActionLabel.text = "BUY";
-            garagePriceIcon.texture = coinIconRT;
+            garagePriceIcon.texture = Resources.Load<Texture2D>(CoinIconPath);
             garagePriceIcon.gameObject.SetActive(true);
         }
     }
@@ -3835,6 +4305,7 @@ public class GameManager : MonoBehaviour
         track.spawnBoostPads = false;
         // corners are wanted here - the car drifts through them for the camera
         track.forceStraight = false;
+        track.flatTrack = false;
         track.behindDistance = lobbyBehindDistance;
         // the camera looks back down the road from in front of the car, so the
         // world has to already stretch a long way behind the starting point
@@ -3849,8 +4320,11 @@ public class GameManager : MonoBehaviour
         track.spawnPowerUps = true;
         track.spawnTirePickups = true;
         track.forceStraight = false;
-        track.behindDistance = runBehindDistance;
-        // the opening flyby also looks back past the car
+        track.flatTrack = false;
+        // The opening flyby looks back past the car, so the world behind has
+        // to stay put until the countdown is over - it is pruned back to the
+        // normal distance the moment the race actually starts.
+        track.behindDistance = 260f;
         track.roadBehindStart = 190f;
     }
 
@@ -3900,7 +4374,10 @@ public class GameManager : MonoBehaviour
         }
         revivesThisRun = 0;
         adRevivesUsed = 0; // 5 ad revives per RUN, not lifetime
-        ResetBiome();      // back to daylight for a fresh run
+        // Endless always starts in daylight forest. A race must NOT be reset
+        // here - it has already been built in its own biome, and wiping the
+        // blend would turn every later stretch back into forest.
+        if (mode == Mode.Endless) ResetBiome();
         invincibleT = doubleCoinsT = magnetT = doubleScoreT = springsT = 0f;
         if (rewindFxGo != null) rewindFxGo.SetActive(false);
         state = State.Playing;
@@ -3954,9 +4431,12 @@ public class GameManager : MonoBehaviour
         audioMan.StopDriving();
 
         bool canTires = tires >= ReviveTireCost;
+        // short and plain - this is read in a hurry, against a five second clock
         reviveTireLabel.text = canTires
-            ? "REVIVE:  " + ReviveTireCost + "  (HAVE " + tires + ")"
-            : "NEED  " + ReviveTireCost + "  (HAVE " + tires + ")";
+            ? "REVIVE   " + ReviveTireCost
+            : "NEED   " + ReviveTireCost;
+        reviveTireLabel.color = canTires ? Color.white : new Color(1f, 0.55f, 0.5f);
+        reviveHaveText.text = "YOU HAVE " + tires;
         bool canAd = adRevivesUsed < 5;
         reviveAdLabel.text = canAd
             ? "WATCH AD (" + (5 - adRevivesUsed) + " LEFT)"
@@ -4022,6 +4502,10 @@ public class GameManager : MonoBehaviour
         car.CenterLane();                                  // back to the middle
         track.ClearObstaclesAhead(car.DistanceTraveled, 80f); // clean runway
         car.GrantMercy(2f);   // mercy window, but keep the speed you had
+        // A boost still queued when you crashed would otherwise cash itself
+        // in the instant you came back, firing the car straight to its
+        // ceiling - and the ceiling never drops again on its own.
+        car.ClearBoost();
         audioMan.StartDriving();   // engine and tyres come back with you
         FlashBonus("REVIVED!", new Color(0.4f, 1f, 0.5f));
         audioMan.PlayCoin();
@@ -4068,15 +4552,14 @@ public class GameManager : MonoBehaviour
         PlayerPrefs.SetInt("Coins", totalCoins);
         PlayerPrefs.Save();
 
-        string cause = result == CarController.TickResult.CrashedOffRoad ? "OFF THE ROAD!" : "CRASHED!";
-        centerText.text = cause +
-            "\n\n<size=37>" + finalScore + "</size>" +
-            (newBest ? "\n<size=27>NEW BEST!</size>" : "") +
-            "\n<size=25>COLLECTED " + coinsThisRun + "  +  BONUS " + bonusCoins + "</size>" +
-            "\n<size=30>+" + runTotal + " COINS</size>";
-        centerText.gameObject.SetActive(true);
-        gameOverPanel.SetActive(true);
+        string cause = result == CarController.TickResult.CrashedOffRoad
+            ? "OFF THE ROAD" : "CRASHED";
+        centerText.gameObject.SetActive(false);
         pauseButton.SetActive(false);
+
+        // beating your best earns its own screen; the results wait behind it
+        if (newBest) ShowBestRun(cause, finalScore, coinsThisRun, bonusCoins);
+        else ShowGameOver(cause, finalScore, false, coinsThisRun, bonusCoins);
     }
 
     void RestartRun()
@@ -4110,6 +4593,7 @@ public class GameManager : MonoBehaviour
                 introRunning = false;
                 if (menuTitle != null) menuTitle.gameObject.SetActive(true);
                 if (menuSubTitle != null) menuSubTitle.gameObject.SetActive(true);
+                SetMenuTitleAlpha(1f);
                 // the login popup waited for the intro - show it now
                 if (state == State.Menu && loginPending) EnterMenu();
             }
@@ -4122,22 +4606,24 @@ public class GameManager : MonoBehaviour
                 if (menuTitle != null && menuTitle.gameObject.activeSelf != showTitle)
                 {
                     menuTitle.gameObject.SetActive(showTitle);
+                    titleFadeT = 0f;
                 }
                 if (menuSubTitle != null && menuSubTitle.gameObject.activeSelf != showTitle)
                 {
                     menuSubTitle.gameObject.SetActive(showTitle);
                 }
+                // fades up as the intro's own letters fade down, so the swap
+                // is a cross-fade instead of one popping off the other
+                if (showTitle) FadeInMenuTitle();
                 if (loginPanel != null && loginPanel.activeSelf)
                 {
                     loginPanel.SetActive(false);
                     if (showcaseRoot != null) showcaseRoot.SetActive(false);
                 }
-                if (intro != null &&
-                    (Input.GetMouseButtonDown(0) ||
-                     (Input.touchCount > 0 && Input.GetTouch(0).phase == TouchPhase.Began)))
-                {
-                    intro.Skip();
-                }
+                // Skipping is handled by the intro's own full-screen button.
+                // Reading raw input here as well would fire on the press while
+                // the UI fires on the release, and anything under the intro
+                // would see the same tap.
             }
         }
 
@@ -4157,6 +4643,7 @@ public class GameManager : MonoBehaviour
             case State.Menu:
                 TickLobbyDrive();
                 TickWheel();
+                if (menuPanel.activeSelf) AnimateSpinButton();
                 break;
 
             case State.Playing:
@@ -4200,7 +4687,12 @@ public class GameManager : MonoBehaviour
         float dt = Time.deltaTime;
         car.TickIdle(dt);
         TickCarSwap(dt);      // the garage's changeover rides along with it
-        TickBiome(dt);
+
+        // The biome deliberately does NOT advance here. This tick runs on the
+        // title screen and in the lobby, and the world changes on a clock, so
+        // leaving it running meant a player who sat in the menu for a minute
+        // watched the showcase car drive off into sunset, then the city, then
+        // the snow. The lobby is always the base biome.
     }
 
     void TickItems(float dt)
@@ -4429,7 +4921,7 @@ public class GameManager : MonoBehaviour
     {
         scoreText.text = Mathf.RoundToInt(score).ToString();
         bestText.text = "BEST " + best;
-        speedText.text = Mathf.RoundToInt(car.CurrentSpeed * 3.6f) + " KM/H";
+        speedText.text = SpeedLabel(car.CurrentSpeed);
         coinHudText.text = "RUN COINS " + coinsThisRun;
         multHudText.text = "X" + ScoreMultiplier;
 
@@ -4529,14 +5021,14 @@ public class GameManager : MonoBehaviour
             new Vector2(1f, 1f), new Vector2(-40f, -196f), new Vector2(400f, 60f));
 
         // always-visible currency counters with model icons, one per top corner
-        MakeCurrencyIcon(uiRoot, new Vector2(0f, 1f), new Vector2(62f, -20f), 52f, false);
+        MakeCurrencyIcon(uiRoot, new Vector2(0f, 1f), new Vector2(62f, -10f), 52f, false);
         persistentCoinsText = MakeText(uiRoot, "TotalCoins", 38, TextAnchor.UpperLeft,
             new Vector2(0f, 1f), new Vector2(124f, -28f), new Vector2(400f, 55f));
         persistentCoinsText.color = new Color(1f, 0.82f, 0.1f);
         MakeCurrencyIcon(uiRoot, new Vector2(1f, 1f), new Vector2(-62f, -12f), 52f, true);
         persistentTiresText = MakeText(uiRoot, "TotalTires", 38, TextAnchor.UpperRight,
             new Vector2(1f, 1f), new Vector2(-124f, -28f), new Vector2(400f, 55f));
-        persistentTiresText.color = new Color(0.7f, 0.9f, 1f);
+        persistentTiresText.color = new Color(1f, 0.34f, 0.30f);
 
         // pause button, top-right (below the tire counter)
         var pauseLabel = MakeButton(uiRoot, "PAUSE", 30,
@@ -4664,7 +5156,7 @@ public class GameManager : MonoBehaviour
 
         spinMenuLabel = MakeButton(menuPanel.transform, "SPIN", 34,
             new Vector2(-ColX, RowTop), small, OpenWheel,
-            new Color(0.55f, 0.30f, 0.85f));
+            new Color(1f, 0.78f, 0.12f));
         MakeButton(menuPanel.transform, "RACES", 34,
             new Vector2(ColX, RowTop), small, OpenRaces);
 
@@ -4691,18 +5183,43 @@ public class GameManager : MonoBehaviour
         sTitle.text = "SETTINGS";
         sTitle.color = new Color(1f, 0.72f, 0.12f);
 
-        AddSliderRow(settingsPanel.transform, "MASTER VOLUME", 500f, volumeSetting, SetVolume);
-        AddSliderRow(settingsPanel.transform, "MUSIC", 340f, volMusic, SetMusicVol);
-        AddSliderRow(settingsPanel.transform, "ENGINE", 180f, volEngine, SetEngineVol);
-        AddSliderRow(settingsPanel.transform, "DRIFT", 20f, volDrift, SetDriftVol);
-        AddSliderRow(settingsPanel.transform, "COINS", -140f, volCoins, SetCoinVol);
-        AddSliderRow(settingsPanel.transform, "STEERING SENSITIVITY", -300f, sensSetting, SetSensitivity);
+        // three sections rather than one long column of sliders
+        settingsTabAudio = MakeButton(settingsPanel.transform, "AUDIO", 34,
+            new Vector2(-320f, 512f), new Vector2(300f, 88f), () => SetSettingsTab(0));
+        settingsTabGeneral = MakeButton(settingsPanel.transform, "GENERAL", 34,
+            new Vector2(0f, 512f), new Vector2(300f, 88f), () => SetSettingsTab(1));
+        settingsTabCredits = MakeButton(settingsPanel.transform, "CREDITS", 34,
+            new Vector2(320f, 512f), new Vector2(300f, 88f), () => SetSettingsTab(2));
 
-        invertBtnLabel = MakeButton(settingsPanel.transform, InvertLabel(), 38,
-            new Vector2(0f, -460f), new Vector2(640f, 100f), ToggleInvert);
+        settingsAudioTab = MakeTabGroup(settingsPanel.transform, "AudioTab");
+        settingsGeneralTab = MakeTabGroup(settingsPanel.transform, "GeneralTab");
+        settingsCreditsTab = MakeTabGroup(settingsPanel.transform, "CreditsTab");
 
-        MakeButton(settingsPanel.transform, "CREDITS", 38,
-            new Vector2(0f, -590f), new Vector2(640f, 100f), OpenCredits);
+        // --- audio
+        AddSliderRow(settingsAudioTab.transform, "MASTER VOLUME", 340f, volumeSetting, SetVolume);
+        AddSliderRow(settingsAudioTab.transform, "MUSIC", 190f, volMusic, SetMusicVol);
+        AddSliderRow(settingsAudioTab.transform, "SOUND EFFECTS", 40f, volSfx, SetSfxVol);
+        AddSliderRow(settingsAudioTab.transform, "ENGINE", -110f, volEngine, SetEngineVol);
+        AddSliderRow(settingsAudioTab.transform, "DRIFT", -260f, volDrift, SetDriftVol);
+        AddSliderRow(settingsAudioTab.transform, "COINS", -410f, volCoins, SetCoinVol);
+
+        // --- general
+        AddSliderRow(settingsGeneralTab.transform, "STEERING SENSITIVITY", 340f,
+            sensSetting, SetSensitivity);
+        invertBtnLabel = MakeButton(settingsGeneralTab.transform, InvertLabel(), 38,
+            new Vector2(0f, 170f), new Vector2(640f, 100f), ToggleInvert);
+        unitsBtnLabel = MakeButton(settingsGeneralTab.transform, UnitsLabel(), 38,
+            new Vector2(0f, 40f), new Vector2(640f, 100f), ToggleUnits);
+
+        // --- credits
+        var credLine = MakeText(settingsCreditsTab.transform, "CreditsBody", 28,
+            TextAnchor.UpperCenter, new Vector2(0.5f, 0.5f),
+            new Vector2(0f, -40f), new Vector2(880f, 960f), true);
+        credLine.text = CreditsText;
+        credLine.color = new Color(1f, 1f, 1f, 0.92f);
+        credLine.lineSpacing = 1.15f;
+
+        SetSettingsTab(0);
 
         MakeButton(settingsPanel.transform, "BACK", 44,
             new Vector2(0f, -720f), new Vector2(560f, 110f), CloseSettings);
@@ -4717,18 +5234,7 @@ public class GameManager : MonoBehaviour
         cTitle.text = "CREDITS";
         cTitle.color = new Color(1f, 0.72f, 0.12f);
 
-        string credits =
-            "DRIFTLINE ETERNAL\nby MEIND GAMES\n\n" +
-            "3D MODELS\n\n" +
-            "Midnight Black Horse - Sketchfab\n" +
-            "Lightning Bolt - Sketchfab\n" +
-            "Keys - Sketchfab\n" +
-            "Charging Bull - Sketchfab\n\n" +
-            "Nature Pack - Quaternius\n" +
-            "Low Poly Car Pack - Designersoup\n\n" +
-            "AUDIO\n\n" +
-            "Music and sound effects\ncreated for this game\n\n" +
-            "All models used under their\nrespective licenses.";
+        string credits = CreditsText;
         // plain font: readable at small sizes, unlike the display font
         var cBody = MakeText(credScroll, "CreditsBody", 30, TextAnchor.UpperCenter,
             new Vector2(0.5f, 0.5f), new Vector2(0f, -60f), new Vector2(880f, 1000f), true);
@@ -4740,7 +5246,9 @@ public class GameManager : MonoBehaviour
             Vector2.zero, new Vector2(560f, 110f), CloseCredits);
         var credBackRt = credBackLabel.transform.parent.GetComponent<RectTransform>();
         credBackRt.anchorMin = credBackRt.anchorMax = credBackRt.pivot = new Vector2(0.5f, 0f);
-        credBackRt.anchoredPosition = new Vector2(0f, 30f);
+        // panels now bleed past the safe area, so bottom-anchored buttons have
+        // to come back up by the same amount to sit where they used to
+        credBackRt.anchoredPosition = new Vector2(0f, 30f + PanelBleed.y);
 
         // --- garage / car shop
         garagePanel = MakePanel(uiRoot, "GaragePanel");
@@ -4889,7 +5397,7 @@ public class GameManager : MonoBehaviour
 
             var cellText = MakeText(cell.transform, "CellText", 24, TextAnchor.MiddleCenter,
                 new Vector2(0.5f, 0.5f), new Vector2(0f, -62f), new Vector2(135f, 50f));
-            cellText.text = i == 6 ? "FREE CAR" : "+" + LoginRewards[i];
+            cellText.text = i == 6 ? "CAR" : "+" + LoginRewards[i];
             loginCells[i] = cell;
             loginCellTexts[i] = cellText;
         }
@@ -4934,7 +5442,7 @@ public class GameManager : MonoBehaviour
             RaceMode.Upgrade up = (RaceMode.Upgrade)u;
             upgradeLabels[u] = MakeButton(raceScroll, "Upg" + u, 20,
                 new Vector2(-320f + u * 320f, 470f), new Vector2(300f, 196f),
-                () => BuyUpgrade(up));
+                () => BuyUpgrade(up), null, true);
             // text sits under the picture
             upgradeLabels[u].rectTransform.anchoredPosition = new Vector2(0f, -46f);
             upgradeLabels[u].rectTransform.sizeDelta = new Vector2(290f, 100f);
@@ -4972,7 +5480,7 @@ public class GameManager : MonoBehaviour
             Vector2.zero, new Vector2(560f, 110f), CloseRaces);
         var raceBackRt = raceBackLabel.transform.parent.GetComponent<RectTransform>();
         raceBackRt.anchorMin = raceBackRt.anchorMax = raceBackRt.pivot = new Vector2(0.5f, 0f);
-        raceBackRt.anchoredPosition = new Vector2(0f, 30f);
+        raceBackRt.anchoredPosition = new Vector2(0f, 30f + PanelBleed.y);
 
         // race HUD: position and distance remaining
         raceHudText = MakeText(uiRoot, "RaceHud", 76, TextAnchor.UpperCenter,
@@ -4992,20 +5500,21 @@ public class GameManager : MonoBehaviour
             new Vector2(0.5f, 0.5f), new Vector2(0f, 550f), new Vector2(800f, 120f));
         qpTitle.text = "QUESTS";
         qpTitle.color = new Color(1f, 0.72f, 0.12f);
-        questMultText = MakeText(questsPanel.transform, "QPMult", 42, TextAnchor.MiddleCenter,
+        questMultText = MakeText(questsPanel.transform, "QPMult", 36, TextAnchor.MiddleCenter,
             new Vector2(0.5f, 0.5f), new Vector2(0f, 430f), new Vector2(900f, 70f));
         questMultText.color = new Color(0.7f, 0.9f, 1f);
-        questTiresText = MakeText(questsPanel.transform, "QPTires", 38, TextAnchor.MiddleCenter,
+        questTiresText = MakeText(questsPanel.transform, "QPTires", 32, TextAnchor.MiddleCenter,
             new Vector2(0.5f, 0.5f), new Vector2(0f, 350f), new Vector2(900f, 60f));
-        questTiresText.color = new Color(0.55f, 0.55f, 0.6f);
+        questTiresText.color = new Color(1f, 0.34f, 0.30f);
         for (int i = 0; i < 3; i++)
         {
             MakeCard(questsPanel.transform, new Vector2(0f, 190f - i * 220f),
                 new Vector2(920f, 190f), new Color(0.22f, 0.17f, 0.33f, 0.95f));
-            questRowTexts[i] = MakeText(questsPanel.transform, "QRow" + i, 32, TextAnchor.MiddleCenter,
-                new Vector2(0.5f, 0.5f), new Vector2(0f, 190f - i * 220f), new Vector2(880f, 180f));
+            questRowTexts[i] = MakeText(questsPanel.transform, "QRow" + i, 30, TextAnchor.MiddleCenter,
+                new Vector2(0.5f, 0.5f), new Vector2(0f, 190f - i * 220f), new Vector2(860f, 180f), true);
+            questRowTexts[i].lineSpacing = 1.25f;
         }
-        var qpHint = MakeText(questsPanel.transform, "QPHint", 28, TextAnchor.MiddleCenter,
+        var qpHint = MakeText(questsPanel.transform, "QPHint", 26, TextAnchor.MiddleCenter,
             new Vector2(0.5f, 0.5f), new Vector2(0f, -450f), new Vector2(920f, 60f));
         qpHint.text = "COMPLETE ALL 3\n+1 MULTIPLIER   +6 TIRES";
         qpHint.color = new Color(1f, 1f, 1f, 0.6f);
@@ -5027,7 +5536,7 @@ public class GameManager : MonoBehaviour
         storeCoinsText.color = new Color(1f, 0.82f, 0.1f);
         storeTiresText = MakeText(shopScroll, "StoreTires", 40, TextAnchor.MiddleCenter,
             new Vector2(0.5f, 0.5f), new Vector2(220f, 540f), new Vector2(440f, 60f));
-        storeTiresText.color = new Color(0.7f, 0.9f, 1f);
+        storeTiresText.color = new Color(1f, 0.34f, 0.30f);
 
         var boxLabel = MakeText(shopScroll, "BoxLabel", 46, TextAnchor.MiddleCenter,
             new Vector2(0.5f, 0.5f), new Vector2(0f, 460f), new Vector2(700f, 70f));
@@ -5043,10 +5552,10 @@ public class GameManager : MonoBehaviour
         tbRt.anchoredPosition = new Vector2(0f, 285f);
         tbRt.sizeDelta = new Vector2(290f, 290f);
 
-        var boxBtnLabel = MakeButton(shopScroll, "OPEN BOX   " + MysteryBoxCost, 34,
-            new Vector2(0f, 90f), new Vector2(700f, 110f), BuyMysteryBox);
+        var boxBtnLabel = MakeButton(shopScroll, "OPEN BOX  " + MysteryBoxCost, 34,
+            new Vector2(0f, 90f), new Vector2(700f, 110f), BuyMysteryBox, null, true);
         MakeCurrencyIcon(boxBtnLabel.transform.parent, new Vector2(0.5f, 0.5f),
-            new Vector2(255f, 0f), 55f, false);
+            new Vector2(196f, 0f), 55f, false);
         boxResultText = MakeText(shopScroll, "BoxResult", 46, TextAnchor.MiddleCenter,
             new Vector2(0.5f, 0.5f), new Vector2(0f, -5f), new Vector2(900f, 70f));
 
@@ -5065,11 +5574,11 @@ public class GameManager : MonoBehaviour
         tb2Rt.anchoredPosition = new Vector2(0f, -265f);
         tb2Rt.sizeDelta = new Vector2(255f, 255f);
 
-        var tokBtn = MakeButton(shopScroll, "OPEN   " + TokenBoxTireCost, 34,
+        var tokBtn = MakeButton(shopScroll, "OPEN  " + TokenBoxTireCost, 34,
             new Vector2(0f, -430f), new Vector2(700f, 110f), BuyTokenBox,
-            new Color(0.16f, 0.45f, 0.9f));
+            new Color(0.16f, 0.45f, 0.9f), true);
         MakeCurrencyIcon(tokBtn.transform.parent, new Vector2(0.5f, 0.5f),
-            new Vector2(215f, 0f), 55f, true);
+            new Vector2(158f, 0f), 55f, true);
         tokenBoxResultText = MakeText(shopScroll, "TokenBoxResult", 44,
             TextAnchor.MiddleCenter, new Vector2(0.5f, 0.5f),
             new Vector2(0f, -520f), new Vector2(900f, 70f));
@@ -5087,7 +5596,8 @@ public class GameManager : MonoBehaviour
             float y = -710f - (i / 2) * 140f;
             Text label = MakeButton(shopScroll,
                 packTires[i] + "\n\n<size=24>" + packPrices[i] + "</size>", 34,
-                new Vector2(x, y), new Vector2(440f, 132f), () => BuyTirePack(amount));
+                new Vector2(x, y), new Vector2(440f, 132f), () => BuyTirePack(amount),
+                null, true);
             // nudge text right to make room for the tire-stack icon
             label.rectTransform.anchoredPosition = new Vector2(45f, 0f);
             label.rectTransform.sizeDelta = new Vector2(330f, 150f);
@@ -5098,7 +5608,7 @@ public class GameManager : MonoBehaviour
             icon.raycastTarget = false;
             var iRt = icon.rectTransform;
             iRt.anchorMin = iRt.anchorMax = iRt.pivot = new Vector2(0.5f, 0.5f);
-            iRt.anchoredPosition = new Vector2(-152f, 6f);
+            iRt.anchoredPosition = new Vector2(-143f, 18f);
             iRt.sizeDelta = new Vector2(88f, 88f);
             packIcons[i] = icon;
         }
@@ -5116,7 +5626,7 @@ public class GameManager : MonoBehaviour
             Text label = MakeButton(shopScroll,
                 cCoins + "\n\n<size=26>" + cCost + "</size>", 32,
                 new Vector2(-330f + i * 330f, -1205f), new Vector2(305f, 155f),
-                () => BuyCoinPack(cCoins, cCost));
+                () => BuyCoinPack(cCoins, cCost), null, true);
             label.rectTransform.anchoredPosition = new Vector2(40f, 0f);
             label.rectTransform.sizeDelta = new Vector2(205f, 155f);
 
@@ -5127,13 +5637,13 @@ public class GameManager : MonoBehaviour
             cIcon.raycastTarget = false;
             var cRt = cIcon.rectTransform;
             cRt.anchorMin = cRt.anchorMax = cRt.pivot = new Vector2(0.5f, 0.5f);
-            cRt.anchoredPosition = new Vector2(-98f, 14f);
+            cRt.anchoredPosition = new Vector2(-74f, 0f);
             cRt.sizeDelta = new Vector2(92f, 92f);
             coinPackIcons[i] = cIcon;
 
-            // tire sits right against the price, low in the button
+            // tyre tucked right up against the price
             MakeCurrencyIcon(label.transform.parent, new Vector2(0.5f, 0.5f),
-                new Vector2(93f, -47f), 32f, true);
+                new Vector2(84f, -27f), 34f, true);
         }
 
         // --- permanent power-up duration upgrades, 7 levels each
@@ -5152,15 +5662,15 @@ public class GameManager : MonoBehaviour
 
             itemUpNames[i] = MakeText(shopScroll, "ItemUpName" + i, 34,
                 TextAnchor.MiddleLeft, new Vector2(0.5f, 0.5f),
-                new Vector2(-215f, y + 22f), new Vector2(480f, 50f));
+                new Vector2(-215f, y + 22f), new Vector2(480f, 50f), true);
             itemUpInfo[i] = MakeText(shopScroll, "ItemUpInfo" + i, 28,
                 TextAnchor.MiddleLeft, new Vector2(0.5f, 0.5f),
-                new Vector2(-215f, y - 24f), new Vector2(480f, 46f));
+                new Vector2(-215f, y - 24f), new Vector2(480f, 46f), true);
             itemUpInfo[i].color = new Color(1f, 1f, 1f, 0.75f);
 
             itemUpButtons[i] = MakeButton(shopScroll, "", 32,
                 new Vector2(270f, y), new Vector2(330f, 104f),
-                () => BuyItemUpgrade(item));
+                () => BuyItemUpgrade(item), null, true);
             // coin icon sits to the left of the price
             itemUpCoins[i] = MakeCurrencyIcon(itemUpButtons[i].transform.parent,
                 new Vector2(0.5f, 0.5f), new Vector2(-105f, 0f), 46f, false);
@@ -5171,7 +5681,7 @@ public class GameManager : MonoBehaviour
             Vector2.zero, new Vector2(560f, 110f), CloseShop);
         var shopBackRt = shopBackLabel.transform.parent.GetComponent<RectTransform>();
         shopBackRt.anchorMin = shopBackRt.anchorMax = shopBackRt.pivot = new Vector2(0.5f, 0f);
-        shopBackRt.anchoredPosition = new Vector2(0f, 30f);
+        shopBackRt.anchoredPosition = new Vector2(0f, 30f + PanelBleed.y);
 
         // --- revive offer
         revivePanel = MakePanel(uiRoot, "RevivePanel");
@@ -5196,21 +5706,146 @@ public class GameManager : MonoBehaviour
         reviveTimerText = MakeText(revivePanel.transform, "RTimer", 66, TextAnchor.MiddleCenter,
             new Vector2(0.5f, 0.5f), new Vector2(0f, 145f), new Vector2(900f, 90f));
         reviveTimerText.color = new Color(1f, 0.8f, 0.25f);
-        reviveTireLabel = MakeButton(revivePanel.transform, "TIRES", 34,
-            new Vector2(0f, 60f), new Vector2(760f, 120f), ReviveWithTires);
+        reviveTireLabel = MakeButton(revivePanel.transform, "TIRES", 44,
+            new Vector2(0f, 60f), new Vector2(760f, 120f), ReviveWithTires, null, true);
+        // the tyre reads as part of the price, so it sits just after the number
         MakeCurrencyIcon(reviveTireLabel.transform.parent, new Vector2(0.5f, 0.5f),
-            new Vector2(-320f, 0f), 60f, true);
-        reviveAdLabel = MakeButton(revivePanel.transform, "AD", 34,
-            new Vector2(0f, -100f), new Vector2(760f, 120f), ReviveWithAd);
+            new Vector2(150f, 0f), 62f, true);
+        reviveTireLabel.rectTransform.anchoredPosition = new Vector2(-34f, 0f);
+        reviveHaveText = MakeText(revivePanel.transform, "RHave", 30,
+            TextAnchor.MiddleCenter, new Vector2(0.5f, 0.5f),
+            new Vector2(0f, -28f), new Vector2(700f, 40f), true);
+        reviveHaveText.color = new Color(1f, 1f, 1f, 0.65f);
+        reviveAdLabel = MakeButton(revivePanel.transform, "AD", 38,
+            new Vector2(0f, -132f), new Vector2(760f, 120f), ReviveWithAd, null, true);
         MakeButton(revivePanel.transform, "GIVE UP", 40,
-            new Vector2(0f, -280f), new Vector2(560f, 110f), DeclineRevive);
+            new Vector2(0f, -300f), new Vector2(560f, 110f), DeclineRevive);
 
-        // --- game over buttons (crash info lives in centerText)
+        BuildGameOverPanel(uiRoot);
+        BuildBestPanel(uiRoot);
+    }
+
+    // ------------------------------------------------------- the death screen
+
+    RectTransform goCard;
+    Image goDim;
+    Text goTitle, goScore, goBestLine, goRunLabel;
+    readonly Text[] goStatValue = new Text[3];
+    float goAnimT = -1f;
+    int goTargetScore;
+    bool goWasBest;
+
+    void BuildGameOverPanel(Transform uiRoot)
+    {
         gameOverPanel = MakePanel(uiRoot, "GameOverPanel");
-        MakeButton(gameOverPanel.transform, "RETRY", 58,
-            new Vector2(0f, -330f), new Vector2(560f, 130f), RestartRun);
-        MakeButton(gameOverPanel.transform, "MENU", 40,
-            new Vector2(0f, -500f), new Vector2(560f, 100f), GoToMenu);
+
+        // full-bleed dim so the world behind reads as a backdrop, not clutter
+        var dimGo = new GameObject("Dim");
+        dimGo.transform.SetParent(gameOverPanel.transform, false);
+        goDim = dimGo.AddComponent<Image>();
+        goDim.color = new Color(0.62f, 0.05f, 0.08f, 0.62f);
+        var dimRt = goDim.rectTransform;
+        dimRt.anchorMin = Vector2.zero;
+        dimRt.anchorMax = Vector2.one;
+        dimRt.offsetMin = dimRt.offsetMax = Vector2.zero;
+
+        // everything below hangs off one holder so the whole screen can
+        // scale and slide in as a single piece
+        var holder = new GameObject("Holder");
+        holder.transform.SetParent(gameOverPanel.transform, false);
+        goCard = holder.AddComponent<RectTransform>();
+        goCard.anchorMin = goCard.anchorMax = goCard.pivot = new Vector2(0.5f, 0.5f);
+        goCard.anchoredPosition = Vector2.zero;
+        goCard.sizeDelta = new Vector2(1000f, 1400f);
+
+        MakeCard(goCard, new Vector2(0f, -40f), new Vector2(980f, 1120f),
+            new Color(0.10f, 0.06f, 0.12f, 0.93f));
+
+        goTitle = MakeText(goCard, "GOTitle", 92, TextAnchor.MiddleCenter,
+            new Vector2(0.5f, 0.5f), new Vector2(0f, 400f), new Vector2(950f, 130f));
+        goTitle.text = "CRASHED";
+        goTitle.color = new Color(1f, 0.34f, 0.28f);
+
+        goRunLabel = MakeText(goCard, "GORunLabel", 32, TextAnchor.MiddleCenter,
+            new Vector2(0.5f, 0.5f), new Vector2(0f, 300f), new Vector2(950f, 60f));
+        goRunLabel.text = "SCORE";
+        goRunLabel.color = new Color(1f, 1f, 1f, 0.55f);
+
+        goScore = MakeText(goCard, "GOScore", 130, TextAnchor.MiddleCenter,
+            new Vector2(0.5f, 0.5f), new Vector2(0f, 200f), new Vector2(950f, 190f));
+
+        goBestLine = MakeText(goCard, "GOBest", 34, TextAnchor.MiddleCenter,
+            new Vector2(0.5f, 0.5f), new Vector2(0f, 105f), new Vector2(950f, 60f));
+        goBestLine.color = new Color(1f, 1f, 1f, 0.6f);
+
+        // Three stat rows, label left and value right. The offsets are the
+        // CENTRE of each text box, so a left-aligned label that starts at
+        // x = -360 has to sit at -360 + width/2.
+        string[] labels = { "DISTANCE", "COINS COLLECTED", "BONUS" };
+        for (int i = 0; i < 3; i++)
+        {
+            float y = 10f - i * 78f;
+            var lab = MakeText(goCard, "GOStatL" + i, 30, TextAnchor.MiddleLeft,
+                new Vector2(0.5f, 0.5f), new Vector2(-160f, y), new Vector2(400f, 60f), true);
+            lab.text = labels[i];
+            lab.color = new Color(1f, 1f, 1f, 0.6f);
+            goStatValue[i] = MakeText(goCard, "GOStatV" + i, 32, TextAnchor.MiddleRight,
+                new Vector2(0.5f, 0.5f), new Vector2(160f, y), new Vector2(400f, 60f), true);
+        }
+
+        MakeButton(goCard, "RETRY", 58,
+            new Vector2(0f, -320f), new Vector2(700f, 140f), RestartRun,
+            new Color(0.16f, 0.62f, 0.32f));
+        MakeButton(goCard, "MENU", 40,
+            new Vector2(0f, -470f), new Vector2(700f, 110f), GoToMenu);
+    }
+
+    /// <summary>Fills in the death screen and starts its entrance.</summary>
+    void ShowGameOver(string cause, int finalScore, bool newBest,
+                      int collected, int bonus)
+    {
+        goTitle.text = cause;
+        // "OFF THE ROAD" is far wider than "CRASHED", so the headline is
+        // sized to the words rather than fixed
+        goTitle.fontSize = Mathf.RoundToInt((cause.Length > 8 ? 58 : 92) * FontScale);
+        goTargetScore = finalScore;
+        goWasBest = newBest;
+        goScore.text = "0";
+        goBestLine.text = newBest ? "NEW PERSONAL BEST" : "BEST  " + best;
+        goBestLine.color = newBest ? new Color(1f, 0.82f, 0.15f)
+                                   : new Color(1f, 1f, 1f, 0.6f);
+        goStatValue[0].text = Mathf.RoundToInt(car.DistanceTraveled) + " M";
+        goStatValue[1].text = "+" + collected;
+        goStatValue[2].text = "+" + bonus;
+        goAnimT = 0f;
+        gameOverPanel.SetActive(true);
+        gameOverPanel.transform.SetAsLastSibling();
+    }
+
+    void TickGameOver()
+    {
+        if (goAnimT < 0f || gameOverPanel == null || !gameOverPanel.activeSelf) return;
+        goAnimT += Time.unscaledDeltaTime;
+
+        // card drops in and settles
+        float p = Mathf.Clamp01(goAnimT / 0.35f);
+        float ease = 1f - Mathf.Pow(1f - p, 3f);
+        goCard.localScale = Vector3.one * Mathf.Lerp(0.86f, 1f, ease);
+        goCard.anchoredPosition = new Vector2(0f, Mathf.Lerp(90f, 0f, ease));
+
+        // the score reels up rather than just appearing
+        float c = Mathf.Clamp01((goAnimT - 0.2f) / 0.9f);
+        int shown = Mathf.RoundToInt(Mathf.Lerp(0f, goTargetScore,
+            1f - Mathf.Pow(1f - c, 3f)));
+        goScore.text = shown.ToString();
+        goScore.color = goWasBest
+            ? Color.Lerp(Color.white, new Color(1f, 0.85f, 0.2f),
+                         0.5f + 0.5f * Mathf.Sin(goAnimT * 3.5f))
+            : Color.white;
+
+        // the red wash floods in on impact, then settles
+        float wash = Mathf.Lerp(0.8f, 0.62f, Mathf.Clamp01(goAnimT / 0.8f));
+        goDim.color = new Color(0.62f, 0.05f, 0.08f, wash);
     }
 
     /// <summary>
@@ -5237,8 +5872,10 @@ public class GameManager : MonoBehaviour
         viewportGo.AddComponent<RectMask2D>();
         vpRt.anchorMin = Vector2.zero;
         vpRt.anchorMax = Vector2.one;
-        vpRt.offsetMin = new Vector2(0f, 150f);  // leave room for the BACK row
-        vpRt.offsetMax = Vector2.zero;
+        // measured from the panel's bled edges, so the visible window is the
+        // same as it was before panels started overspilling the safe area
+        vpRt.offsetMin = new Vector2(PanelBleed.x, 150f + PanelBleed.y);
+        vpRt.offsetMax = new Vector2(-PanelBleed.x, -PanelBleed.y);
 
         var contentGo = new GameObject("Content");
         contentGo.transform.SetParent(viewportGo.transform, false);
@@ -5275,6 +5912,13 @@ public class GameManager : MonoBehaviour
         return innerGo.transform;
     }
 
+    /// <summary>
+    /// A full-screen panel. It deliberately overspills the safe area on every
+    /// side: the UI lives inside the notch inset, so a panel that stopped at
+    /// the safe area would leave strips of the game visible along the edges
+    /// behind its backdrop. The overspill is symmetric, so anything centred
+    /// inside it stays exactly where it was.
+    /// </summary>
     GameObject MakePanel(Transform parent, string name)
     {
         var go = new GameObject(name);
@@ -5282,11 +5926,14 @@ public class GameManager : MonoBehaviour
         var rt = go.AddComponent<RectTransform>();
         rt.anchorMin = Vector2.zero;
         rt.anchorMax = Vector2.one;
-        rt.offsetMin = Vector2.zero;
-        rt.offsetMax = Vector2.zero;
+        rt.offsetMin = new Vector2(-PanelBleed.x, -PanelBleed.y);
+        rt.offsetMax = new Vector2(PanelBleed.x, PanelBleed.y);
         go.SetActive(false);
         return go;
     }
+
+    /// <summary>How far panels reach past the safe area, in canvas units.</summary>
+    static readonly Vector2 PanelBleed = new Vector2(260f, 460f);
 
     void AddSliderRow(Transform parent, string label, float y, float value,
         UnityEngine.Events.UnityAction<float> onChanged)
@@ -5413,9 +6060,14 @@ public class GameManager : MonoBehaviour
     }
 
     // returns the label so callers can update its text later
+    /// <param name="plainFont">
+    /// Use the plain font instead of the display one. The racing font is
+    /// heavily slanted and loses legibility at small sizes, so anything with
+    /// numbers packed into a small button reads far better in plain text.
+    /// </param>
     Text MakeButton(Transform parent, string label, int fontSize,
         Vector2 offset, Vector2 size, UnityEngine.Events.UnityAction onClick,
-        Color? tint = null)
+        Color? tint = null, bool plainFont = false)
     {
         var go = new GameObject(label + "Btn");
         go.transform.SetParent(parent, false);
@@ -5433,7 +6085,7 @@ public class GameManager : MonoBehaviour
         btn.onClick.AddListener(onClick);
 
         var text = MakeText(go.transform, "Label", fontSize, TextAnchor.MiddleCenter,
-            new Vector2(0.5f, 0.5f), Vector2.zero, size);
+            new Vector2(0.5f, 0.5f), Vector2.zero, size, plainFont);
         text.text = label;
         return text;
     }
@@ -5551,10 +6203,13 @@ public class GameManager : MonoBehaviour
         text.font = plainFont
             ? Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf")
             : uiFont;
-        text.fontSize = Mathf.RoundToInt(size * FontScale);
+        // The plain font is used where legibility matters most - small,
+        // number-heavy labels - so it is set a little larger and bold to hold
+        // its own against the display font around it.
+        text.fontSize = Mathf.RoundToInt(size * FontScale * (plainFont ? 1.2f : 1f));
         // custom racing fonts are usually already slanted; the fallback font
         // gets bold+italic to fake the same look
-        text.fontStyle = plainFont ? FontStyle.Normal
+        text.fontStyle = plainFont ? FontStyle.Bold
                        : usingCustomFont ? FontStyle.Bold : FontStyle.BoldAndItalic;
         text.alignment = anchor;
         text.color = Color.white;
@@ -5563,9 +6218,14 @@ public class GameManager : MonoBehaviour
         text.verticalOverflow = VerticalWrapMode.Overflow;
         text.raycastTarget = false;
 
+        // Unity's Outline is really four offset copies of the text stacked
+        // behind it, so the distance has to stay small - push it out and the
+        // copies separate visibly, and it stops looking like an outline and
+        // starts looking like a second label behind the first. Opaque and
+        // tight reads far heavier than wide and translucent.
         var outline = go.AddComponent<Outline>();
-        outline.effectColor = new Color(0f, 0f, 0f, 0.85f);
-        outline.effectDistance = new Vector2(3f, -3f);
+        outline.effectColor = new Color(0f, 0f, 0f, 1f);
+        outline.effectDistance = new Vector2(2f, -2f);
 
         var rt = text.rectTransform;
         rt.anchorMin = anchorPoint;

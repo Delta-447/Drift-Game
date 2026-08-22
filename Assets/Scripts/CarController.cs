@@ -44,6 +44,7 @@ public class CarController : MonoBehaviour
     float currentDriftPercent;
     float smoothedDriftYaw;
     float smoothedBank;
+    float smoothedJumpPitch;
     ParticleSystem sparkL, sparkR;
     float invulnTimer;
 
@@ -52,6 +53,10 @@ public class CarController : MonoBehaviour
     public bool springsActive;    // tap to jump
     public float jumpDuration = 0.75f;
     public float jumpHeight = 2.3f;
+    [Tooltip("How far the nose lifts and drops through a spring jump.")]
+    public float jumpPitchAngle = 11f;
+    [Tooltip("Fraction of the screen height a finger must travel upward to jump.")]
+    public float jumpSwipeFraction = 0.06f;
     float jumpTimer;
     bool jumpStarted;
     public bool IsJumping { get { return jumpTimer > 0f; } }
@@ -89,16 +94,18 @@ public class CarController : MonoBehaviour
     [Tooltip("Strength of outward push in corners. The core difficulty knob.")]
     public float centrifugalFactor = 0.85f;
     [Tooltip("Sideways speed needed before it counts as a drift.")]
-    public float driftThreshold = 1.3f;
-    [Tooltip("Fraction of that threshold where smoke and skid marks start.")]
-    [Range(0.1f, 1f)] public float effectsEarlyFactor = 0.26f;
+    public float driftThreshold = 6.5f;
+    [Tooltip("Fraction of that threshold where smoke, skid marks and the " +
+             "drift sound start. Very low means they show up the instant the " +
+             "car steps out at all.")]
+    [Range(0.02f, 1f)] public float effectsEarlyFactor = 0.05f;
 
     [Header("Drift visual")]
     [Tooltip("How far ahead of centre the car pivots when drifting. " +
              "Higher = the rear swings out more.")]
     public float driftPivotForward = 0.85f;
-    public float driftAngle = 52f;
-    public float driftRotationSpeed = 3.2f;
+    public float driftAngle = 42f;
+    public float driftRotationSpeed = 9f;
     public float driftBankAngle = 7f;
     [Tooltip("How much the nose points into corners (sells the drift).")]
     public float cornerDriftVisual = 0.45f;
@@ -154,6 +161,58 @@ public class CarController : MonoBehaviour
 
     float touchAnchorX;
     bool anchorActive;
+    float jumpSwipeBaseY = -1f;
+
+    /// <summary>
+    /// True on a fresh upward flick of the finger that is already down. The
+    /// thumb never has to be lifted - which matters, because lifting it also
+    /// releases the steering - and letting go can no longer jump by accident.
+    /// </summary>
+    bool SwipedUp()
+    {
+        float y;
+        bool held;
+
+        if (Input.touchCount > 0)
+        {
+            Touch t = Input.GetTouch(0);
+            y = t.position.y;
+            held = t.phase != TouchPhase.Ended && t.phase != TouchPhase.Canceled;
+        }
+        else
+        {
+            y = Input.mousePosition.y;
+            held = Input.GetMouseButton(0);
+        }
+
+        if (!held) { jumpSwipeBaseY = -1f; return false; }
+        if (jumpSwipeBaseY < 0f) { jumpSwipeBaseY = y; return false; }
+
+        // the reference point trails the finger downward, so a swipe is always
+        // measured from the lowest point it has reached
+        if (y < jumpSwipeBaseY) jumpSwipeBaseY = y;
+
+        if (y - jumpSwipeBaseY < Screen.height * jumpSwipeFraction) return false;
+
+        jumpSwipeBaseY = y;      // one flick, one jump
+        return true;
+    }
+
+    bool tickedThisFrame;
+
+    /// <summary>
+    /// Whenever nothing is driving the car - paused, crashed, rewinding, sat
+    /// in a menu - the front wheels ease back to straight. Without this they
+    /// freeze at whatever angle they were on when the last Tick ran and stay
+    /// there, which looks like the steering has jammed.
+    /// </summary>
+    void Update()
+    {
+        if (tickedThisFrame) { tickedThisFrame = false; return; }
+        if (wheelSpin == null) return;
+        wheelSpin.steerAngle = Mathf.MoveTowards(wheelSpin.steerAngle, 0f,
+                                                 120f * Time.deltaTime);
+    }
 
     void Awake()
     {
@@ -329,6 +388,7 @@ public class CarController : MonoBehaviour
         CurrentSpeed = baseSpeed;
         LateralOffset = 0f;
         LateralVelocity = 0f;
+        smoothedSteer = 0f;
         IsDrifting = false;
         IsSliding = false;
         anchorActive = false;
@@ -336,7 +396,6 @@ public class CarController : MonoBehaviour
         idleMode = false;
         idleYawPercent = 0f;
         idleYawBase = 0f;
-        smoothedSteer = 0f;
         CaptureVisualRotation();
         spinTimer = 0f;
         smoothedDriftYaw = 0f;
@@ -383,6 +442,7 @@ public class CarController : MonoBehaviour
     /// <summary>Advance the simulation one frame. Called by GameManager while playing.</summary>
     public TickResult Tick(float dt)
     {
+        tickedThisFrame = true;
         if (track == null) return TickResult.Ok;
 
         // The menu's showcase drive sets its own body angle. Driving for real
@@ -414,16 +474,11 @@ public class CarController : MonoBehaviour
             : steer;
         steer = smoothedSteer;
 
-        // springs item: any fresh tap launches a jump
-        if (springsActive && jumpTimer <= 0f)
+        // springs item: flick the thumb UP to jump, without lifting it
+        if (springsActive && jumpTimer <= 0f && SwipedUp())
         {
-            bool tapBegan = Input.GetMouseButtonDown(0)
-                || (Input.touchCount > 0 && Input.GetTouch(0).phase == TouchPhase.Began);
-            if (tapBegan)
-            {
-                jumpTimer = jumpDuration;
-                jumpStarted = true;   // GameManager plays the boing
-            }
+            jumpTimer = jumpDuration;
+            jumpStarted = true;       // GameManager plays the boing
         }
         if (jumpTimer > 0f) jumpTimer -= dt;
         UpdateShield(dt);
@@ -460,8 +515,7 @@ public class CarController : MonoBehaviour
         LateralVelocity *= Mathf.Exp(-decay * dt);
 
         // The sweet spot: counter-steering out of a decent slide parks the car
-        // at a held angle rather than letting it wash out or spin further. This
-        // is what makes a clean corner feel locked in.
+        // at a held angle rather than letting it wash out or spin further.
         float slideFrac = Mathf.Abs(LateralVelocity) / maxLateralSpeed;
         if (countering && slideFrac > 0.40f && spinTimer <= 0f)
         {
@@ -483,7 +537,11 @@ public class CarController : MonoBehaviour
         // wide through a corner counts as a drift too, which is what makes the
         // combo build naturally on a fast line.
         IsDrifting = Mathf.Abs(LateralVelocity) > driftThreshold;
-        IsSliding = Mathf.Abs(LateralVelocity) > driftThreshold * effectsEarlyFactor;
+        // Smoke, skid marks and the drift sound come on with the INPUT, not
+        // with the slide - touch the screen and the car is already laying
+        // rubber, long before it has stepped out far enough to score.
+        IsSliding = Mathf.Abs(smoothedSteer) > 0.015f ||
+                    Mathf.Abs(LateralVelocity) > driftThreshold * effectsEarlyFactor;
 
         // sustained drift timer, with a short grace window so a quick
         // straighten-up between corners doesn't reset the multiplier
@@ -499,6 +557,7 @@ public class CarController : MonoBehaviour
         }
 
         ApplyPose(dt);
+        SeatOnWheels();
 
         // Front wheels point where the car is actually going. The body is
         // yawed by the drift, and the wheels live inside it, so cancelling
@@ -550,8 +609,6 @@ public class CarController : MonoBehaviour
         // sideways slide + nose-into-corner pose while cornering at speed
         float slideTerm = LateralVelocity / maxLateralSpeed;
         float cornerTerm = currentCurvDegPerM * CurrentSpeed * cornerDriftVisual / driftAngle;
-        // The showcase drive sets its own angle: it is a performance, so the
-        // nose is aimed into the corner rather than worked out from the slide.
         float driftPercent = idleMode
             ? Mathf.Clamp(idleYawPercent, -1f, 1f)
             : Mathf.Clamp(slideTerm + cornerTerm, -1f, 1f);
@@ -567,10 +624,25 @@ public class CarController : MonoBehaviour
         currentDriftPercent = driftPercent;
         UpdateSkidTrails(visualYaw);
 
-        // springs item: jump arc on top of whatever else the car is doing
-        float jumpY = jumpTimer > 0f
-            ? Mathf.Sin(Mathf.PI * (1f - jumpTimer / jumpDuration)) * jumpHeight
-            : 0f;
+        // Springs: a proper arc. It leaves the ground quickly, floats through
+        // the top and settles back down, with the nose lifting on the way up
+        // and dropping on the way down, so the car looks like it is being
+        // thrown rather than sliding up an invisible ramp.
+        float jumpY = 0f;
+        float jumpPitch = 0f;
+        if (jumpTimer > 0f)
+        {
+            float p = 1f - jumpTimer / jumpDuration;          // 0 -> 1
+            float arc = 4f * p * (1f - p);                    // parabola
+            arc = Mathf.Pow(arc, 0.72f);                      // fuller at the top
+            jumpY = arc * jumpHeight;
+
+            // vertical speed drives the pitch: nose up rising, down falling
+            jumpPitch = -(1f - 2f * p) * jumpPitchAngle;
+
+            // and a last-moment squash as it lands
+            if (p > 0.88f) jumpY -= (p - 0.88f) / 0.12f * 0.06f;
+        }
 
         // hover car: banks hard into drifts, dipping until the rim kisses
         // the road (handling is untouched - this is pure animation)
@@ -598,12 +670,22 @@ public class CarController : MonoBehaviour
             ? Mathf.Lerp(smoothedBank, bank, Mathf.Clamp01(driftRotationSpeed * dt))
             : bank;
 
-        Quaternion driftRot = Quaternion.Euler(hoverPitch, smoothedDriftYaw, smoothedBank);
+        // the jump's pitch is eased in so the nose lifts smoothly rather than
+        // snapping to an angle the moment the car leaves the ground
+        smoothedJumpPitch = dt > 0f
+            ? Mathf.Lerp(smoothedJumpPitch, jumpPitch, 1f - Mathf.Exp(-9f * dt))
+            : jumpPitch;
+
+        Quaternion driftRot = Quaternion.Euler(hoverPitch + smoothedJumpPitch,
+                                               smoothedDriftYaw, smoothedBank);
         carVisual.localRotation = startingVisualRotation * BaseVisualRotation() * driftRot;
 
         // The car pivots about a point ahead of its centre, so the tail swings
-        // wide the way a real drift does instead of spinning on the spot.
-        Vector3 pivot = new Vector3(0f, 0f, driftPivotForward);
+        // wide the way a real drift does instead of spinning on the spot. An
+        // oil spin is different: that one turns about the middle of the car,
+        // or the whole body swings around the nose like a compass needle.
+        float pivotFwd = spinTimer > 0f ? 0f : driftPivotForward;
+        Vector3 pivot = new Vector3(0f, 0f, pivotFwd);
         Vector3 pivotShift = pivot - driftRot * pivot;
         carVisual.localPosition += new Vector3(pivotShift.x, 0f, pivotShift.z);
     }
@@ -710,7 +792,9 @@ public class CarController : MonoBehaviour
             baseVisualY = 0f;
         }
         visualRotationCaptured = true;
-        bodyCentreMeasured = false;   // re-measured for the new model
+        bodyCentreMeasured = false;
+        wheelSeatDone = false;
+        wheelSeatTries = 0;   // re-measured for the new model
     }
 
     /// <summary>
@@ -757,6 +841,41 @@ public class CarController : MonoBehaviour
     [Tooltip("How far the front wheels turn at full steering lock.")]
     public float frontWheelSteerAngle = 38f;
     WheelSpinner wheelSpin;
+    bool wheelSeatDone;
+    int wheelSeatTries;
+
+    /// <summary>
+    /// Drops the fitted model so its WHEELS rest on the road. Model bounds are
+    /// unreliable - spoilers, mirrors and stray parts all move the lowest
+    /// point - but the wheels are by definition where the car meets the
+    /// ground, so once they have been identified they are the truth.
+    /// </summary>
+    void SeatOnWheels()
+    {
+        if (wheelSeatDone || carVisual == null) return;
+        if (wheelSpin == null || wheelSeatTries > 90) { wheelSeatDone = true; return; }
+
+        wheelSeatTries++;
+        if (!wheelSpin.TryGetWheelBottom(out float bottom)) return;
+
+        float delta = transform.position.y - bottom;
+        if (Mathf.Abs(delta) > 0.004f)
+        {
+            baseVisualY += delta;
+            appliedVisualY += delta;
+            carVisual.localPosition += new Vector3(0f, delta, 0f);
+        }
+
+        // and put the skid marks under the real rear tyres rather than at a
+        // guessed fraction of the bodywork
+        if (wheelSpin.TryGetRearWheelOffsets(transform, out float hw, out float back))
+        {
+            rearWheelHalfWidth = Mathf.Clamp(hw, 0.3f, 1.4f);
+            rearWheelBack = Mathf.Clamp(back, 0.4f, 2.2f);
+        }
+
+        wheelSeatDone = true;
+    }
     float bodyLength = 4.2f, bodyWidth = 1.9f, bodyHeight = 1.3f;
     Vector3 bodyCenterLocal = new Vector3(0f, 0.65f, 0f);
 
@@ -1054,6 +1173,15 @@ public class CarController : MonoBehaviour
         CurrentSpeed = speed;
     }
 
+    /// <summary>
+    /// Holds the car to a speed it could actually have reached by now. Used
+    /// on a revive, so coming back can never hand you a top-speed car.
+    /// </summary>
+    public void CapSpeed(float limit)
+    {
+        CurrentSpeed = Mathf.Clamp(CurrentSpeed, baseSpeed, Mathf.Max(baseSpeed, limit));
+    }
+
     /// <summary>Cancels any queued or active boost.</summary>
     public void ClearBoost()
     {
@@ -1099,6 +1227,7 @@ public class CarController : MonoBehaviour
     /// </summary>
     public void TickIdle(float dt)
     {
+        tickedThisFrame = true;
         if (track == null) return;
         idleMode = true;
 
@@ -1149,6 +1278,7 @@ public class CarController : MonoBehaviour
         IsDrifting = Mathf.Abs(LateralVelocity) > driftThreshold;
         IsSliding = Mathf.Abs(LateralVelocity) > driftThreshold * effectsEarlyFactor;
         ApplyPose(dt);
+        SeatOnWheels();
 
         if (wheelSpin != null)
         {

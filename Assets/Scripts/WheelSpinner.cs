@@ -58,6 +58,79 @@ public class WheelSpinner : MonoBehaviour
 
     public int WheelCount { get { return wheels.Count; } }
 
+    /// <summary>
+    /// Where the REAR wheels actually sit, relative to the car's rig: how far
+    /// out to the side, and how far back. Skid marks are drawn from these, so
+    /// they line up with the tyres on every model instead of being guessed
+    /// from the bodywork's proportions.
+    /// </summary>
+    public bool TryGetRearWheelOffsets(Transform reference, out float halfWidth, out float back)
+    {
+        halfWidth = 0f;
+        back = 0f;
+        if (!setupDone) Setup();
+        if (wheels.Count == 0 || reference == null) return false;
+
+        // collect every wheel's position in the car's own space
+        var local = new List<Vector3>(wheels.Count);
+        for (int i = 0; i < wheels.Count; i++)
+        {
+            Transform t = wheels[i].t;
+            if (t == null) continue;
+            var r = t.GetComponent<Renderer>();
+            if (r == null) continue;
+            local.Add(reference.InverseTransformPoint(r.bounds.center));
+        }
+        if (local.Count == 0) return false;
+
+        // the rear pair is everything behind the middle of the wheelbase
+        float midZ = 0f;
+        for (int i = 0; i < local.Count; i++) midZ += local[i].z;
+        midZ /= local.Count;
+
+        int n = 0;
+        float sumX = 0f, sumZ = 0f;
+        for (int i = 0; i < local.Count; i++)
+        {
+            if (local[i].z > midZ) continue;
+            sumX += Mathf.Abs(local[i].x);
+            sumZ += local[i].z;
+            n++;
+        }
+        if (n == 0) return false;
+
+        halfWidth = sumX / n;
+        back = -(sumZ / n);          // positive = behind the car's centre
+        return true;
+    }
+
+    /// <summary>
+    /// Lowest point of the wheels in world space - where the car actually
+    /// touches the road, which is far more reliable than the lowest point of
+    /// the whole model.
+    /// </summary>
+    public bool TryGetWheelBottom(out float y)
+    {
+        y = 0f;
+        if (!setupDone) Setup();
+        if (wheels.Count == 0) return false;
+
+        bool any = false;
+        float lowest = float.MaxValue;
+        for (int i = 0; i < wheels.Count; i++)
+        {
+            Transform t = wheels[i].t;
+            if (t == null) continue;
+            var r = t.GetComponent<Renderer>();
+            if (r == null) continue;
+            lowest = Mathf.Min(lowest, r.bounds.min.y);
+            any = true;
+        }
+        if (!any) return false;
+        y = lowest;
+        return true;
+    }
+
     Transform setupReference;
     bool setupDone;
 
@@ -70,6 +143,23 @@ public class WheelSpinner : MonoBehaviour
     public static WheelSpinner Attach(GameObject model, Transform reference)
     {
         if (model == null) return null;
+
+        // The same GameObject can be handed to Attach more than once: swapped
+        // models are fresh instances, but the starter car is the one object in
+        // the scene and it gets re-attached every time it is re-equipped.
+        // A leftover spinner keeps writing the wheel rotations every frame
+        // with its own stale steering angle, and whichever of the two runs
+        // last that frame wins - which looks exactly like the steering has
+        // jammed. Clear out any previous ones first.
+        var stale = model.GetComponents<WheelSpinner>();
+        for (int i = 0; i < stale.Length; i++)
+        {
+            if (stale[i] == null) continue;
+            stale[i].ResetWheels();     // put the wheels back before letting go
+            stale[i].enabled = false;   // Destroy is deferred; stop it now
+            Destroy(stale[i]);
+        }
+
         var spinner = model.AddComponent<WheelSpinner>();
         spinner.setupReference = reference != null ? reference : model.transform;
         return spinner;
