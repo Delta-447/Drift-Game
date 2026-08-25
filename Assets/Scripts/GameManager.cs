@@ -72,13 +72,13 @@ public class GameManager : MonoBehaviour
     // has to be reliably tunable from code lives here instead.
 
     /// <summary>Speed at the start of an endless run, in m/s.</summary>
-    // 35 mph, in m/s. The HUD can read in either unit, but the tuning is
+    // 45 mph, in m/s. The HUD can read in either unit, but the tuning is
     // quoted in mph because that is how it was asked for.
-    const float RunBaseSpeed = 15.65f;
+    const float RunBaseSpeed = 20.11f;
     /// <summary>Top speed of an endless run before car bonuses.</summary>
     const float RunMaxSpeed = 42.92f;   // 96 mph
     /// <summary>m/s gained per second: 8 m/s over about six minutes.</summary>
-    const float RunSpeedGain = 0.0649f;  // 35 -> 96 mph over seven minutes
+    const float RunSpeedGain = 0.0543f;  // 45 -> 96 mph over seven minutes
 
 
     /// <summary>Score per metre travelled, before multipliers.</summary>
@@ -174,6 +174,26 @@ public class GameManager : MonoBehaviour
         new Color(1f, 0.45f, 0.75f),   // caldera - pink keys
         new Color(0.75f, 0.75f, 0.8f), // vettura - black horse (light text)
     };
+
+    /// <summary>
+    /// A brand token is only worth winning while a car still needs it. Once
+    /// every car of that marque is in the garage the token buys nothing, so
+    /// the wheel and the boxes stop handing it out and pay coins instead.
+    /// </summary>
+    bool TokenStillUseful(Currency c)
+    {
+        if (c == Currency.Coins) return true;
+        for (int i = 0; i < Cars.Length; i++)
+        {
+            if (Cars[i].currency != c) continue;
+            if (DevOnlyCar(i)) continue;
+            if (!OwnedCar(i)) return true;
+        }
+        return false;
+    }
+
+    /// <summary>What a retired token pays out instead.</summary>
+    int CoinsInsteadOfTokens(int tokens) { return Mathf.Max(500, tokens * 600); }
 
     int GetToken(Currency c)
     {
@@ -904,10 +924,6 @@ public class GameManager : MonoBehaviour
     const string CreditsText =
         "DRIFTLINE ETERNAL\nby MEIND GAMES\n\n" +
         "3D MODELS\n\n" +
-        "Midnight Black Horse - Sketchfab\n" +
-        "Lightning Bolt - Sketchfab\n" +
-        "Keys - Sketchfab\n" +
-        "Charging Bull - Sketchfab\n\n" +
         "Nature Pack - Quaternius\n" +
         "Low Poly Car Pack - Designersoup\n\n" +
         "AUDIO\n\n" +
@@ -1367,6 +1383,10 @@ public class GameManager : MonoBehaviour
         track.roadWidth = raceRoadWidth;     // three proper lanes to fight over
         track.roadBehindStart = 8f;          // no empty road visible behind the grid
         track.flatTrack = true;              // a level circuit, whatever the biome
+        // A flat circuit with the stock corner mix reads as one long straight.
+        // Tighter bends, held longer, with less road between them.
+        track.curveTightness = 1.3f;
+        track.straightBias = 0.6f;
 
         // The biome goes in with the build request: Init generates the opening
         // stretch immediately, so a race in the city or the snow has to be
@@ -1410,6 +1430,7 @@ public class GameManager : MonoBehaviour
         track.BuildStartLine(car.DistanceTraveled + 24f);
 
         raceCountdown = 3f;      // 3 - 2 - 1, then GO on release
+        car.steeringLocked = true;
         ApplyUpgrades();
         race.stockSpeedReference = raceBaseSpeed;
         race.BuildField(level, car.DistanceTraveled, raceBaseSpeed, MakeRacerVisual);
@@ -1431,39 +1452,12 @@ public class GameManager : MonoBehaviour
             carIdx = 1 + (carIdx % (Cars.Length - 1));
         }
 
-        CarDef d = Cars[carIdx];
-        // a few models in the pack are authored nose-backwards
-        float extraFlip = System.Array.IndexOf(BackwardsModels, d.name) >= 0 ? 180f : 0f;
-        GameObject prefab = d.path != null ? Resources.Load<GameObject>(d.path) : null;
-        if (prefab == null) return null;
-
-        var root = new GameObject("RacerCar");
-        GameObject m = Instantiate(prefab, root.transform);
-        m.transform.localPosition = Vector3.zero;
-        m.transform.localRotation =
-            Quaternion.Euler(0f, d.yaw + racerYawOffset + extraFlip, 0f) * prefab.transform.rotation;
-        CarController.BlackenWindows(m);
-
-        var rends = m.GetComponentsInChildren<Renderer>();
-        if (rends.Length == 0) { Destroy(root); return null; }
-
-        Bounds b = rends[0].bounds;
-        for (int i = 1; i < rends.Length; i++) b.Encapsulate(rends[i].bounds);
-
-        float length = Mathf.Max(b.size.x, b.size.z, 0.01f);
-        float k = 4.2f / length;
-        m.transform.localScale = m.transform.localScale * k;
-
-        // measure twice: renderer bounds can lag a scale change by a frame
-        for (int pass = 0; pass < 2; pass++)
-        {
-            b = rends[0].bounds;
-            for (int i = 1; i < rends.Length; i++) b.Encapsulate(rends[i].bounds);
-            Vector3 offset = root.transform.position - b.center;
-            m.transform.localPosition += new Vector3(
-                offset.x, root.transform.position.y - b.min.y, offset.z);
-        }
-        return root;
+        // The same builder the player's own car uses. This used to be a
+        // near-copy that seated the model on the very lowest point of its
+        // bounds and skipped the per-model height corrections - so any car
+        // with a stray low part, or one that needed a correction, sat in the
+        // air on the grid while the identical model on the road did not.
+        return BuildCarModel(carIdx);
     }
 
     /// <summary>Runs the 3-2-1-GO sequence. Returns true while it is running.</summary>
@@ -1481,6 +1475,7 @@ public class GameManager : MonoBehaviour
             countdownText.transform.localRotation = Quaternion.identity;
             countdownText.gameObject.SetActive(true);
             audioMan.PlayCountGo();
+            car.steeringLocked = false;
             if (mode == Mode.Race) track.SetStartLights(0, true);   // lights out, go
             else OpenTheRoad();                                     // items start now
             audioMan.StartDriving();
@@ -1593,6 +1588,32 @@ public class GameManager : MonoBehaviour
     const int DailySpins = 2;
     GameObject wheelPanel;
     RectTransform wheelDisc;
+    readonly RawImage[] wheelSliceIcons = new RawImage[Wheel.Length];
+    readonly Text[] wheelSliceLabels = new Text[Wheel.Length];
+
+    /// <summary>
+    /// Repaints any token slice whose marque is fully collected as a coin
+    /// prize, so the wheel never advertises something worthless.
+    /// </summary>
+    void RefreshWheelSlices()
+    {
+        for (int i = 0; i < Wheel.Length; i++)
+        {
+            if (wheelSliceIcons[i] == null) continue;
+            WheelSlot slot = Wheel[i];
+            bool retired = slot.kind == SpinPrize.Tokens
+                           && !TokenStillUseful(slot.currency);
+
+            wheelSliceIcons[i].texture = Resources.Load<Texture2D>(
+                retired ? CoinIconPath : WheelIconPath(slot));
+            if (wheelSliceLabels[i] != null)
+            {
+                wheelSliceLabels[i].text = retired
+                    ? CoinsInsteadOfTokens(slot.amount).ToString()
+                    : slot.label;
+            }
+        }
+    }
     Text wheelSpinsText, wheelResultText, spinMenuLabel, wheelSpinLabel, wheelAdLabel;
     float wheelAngle, wheelFrom, wheelTo, wheelT, wheelDuration;
     int lastWheelTick;
@@ -1657,6 +1678,7 @@ public class GameManager : MonoBehaviour
                                       : new Color(0.35f, 0.32f, 0.45f);
             }
         }
+        RefreshWheelSlices();
         RefreshSpinBadge();
     }
 
@@ -1906,6 +1928,18 @@ public class GameManager : MonoBehaviour
             {
                 Currency cur = s.currency == Currency.Coins
                     ? (Currency)Random.Range(1, 5) : s.currency;
+
+                // that marque is fully collected - pay coins rather than a
+                // currency with nothing left to spend it on
+                if (!TokenStillUseful(cur))
+                {
+                    int paid = CoinsInsteadOfTokens(s.amount);
+                    totalCoins += paid;
+                    PlayerPrefs.SetInt("Coins", totalCoins);
+                    msg = "+" + paid + " COINS";
+                    col = TokenColors[0];
+                    break;
+                }
                 SetToken(cur, GetToken(cur) + s.amount);
                 msg = "+" + s.amount + " " + TokenNames[(int)cur];
                 col = TokenColors[(int)cur];
@@ -2080,6 +2114,7 @@ public class GameManager : MonoBehaviour
 
             // a picture of the prize, with the amount written under it
             var icoGo = new GameObject("SliceIcon" + i);
+            wheelSliceIcons[i] = null;   // filled in just below
             icoGo.transform.SetParent(discGo.transform, false);
             var ico = icoGo.AddComponent<RawImage>();
             ico.raycastTarget = false;
@@ -2090,6 +2125,7 @@ public class GameManager : MonoBehaviour
             icoRt.anchoredPosition = at * 238f;
             icoRt.sizeDelta = new Vector2(92f, 92f);
             icoRt.localRotation = Quaternion.Euler(0f, 0f, -ang);
+            wheelSliceIcons[i] = ico;
 
             var label = MakeText(discGo.transform, "Slice" + i, 36, TextAnchor.MiddleCenter,
                 new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(190f, 70f), true);
@@ -2097,7 +2133,9 @@ public class GameManager : MonoBehaviour
             label.color = Color.white;
             label.rectTransform.anchoredPosition = at * 152f;
             label.rectTransform.localRotation = Quaternion.Euler(0f, 0f, -ang);
+            wheelSliceLabels[i] = label;
         }
+        RefreshWheelSlices();
 
         // pointer at the top, a triangle biting down into the wheel
         var ptr = new GameObject("Pointer");
@@ -2204,6 +2242,10 @@ public class GameManager : MonoBehaviour
         rt.offsetMin = new Vector2(-200f, 0f);
         rt.offsetMax = new Vector2(200f, 0f);
         rt.sizeDelta = new Vector2(400f, 0f);
+        // Pushed out past the safe area. Anchored flush to the edge, the bar
+        // stopped where the UI stops and the road showed through the strip
+        // above the notch and below the home bar.
+        rt.anchoredPosition = new Vector2(0f, (edge > 0.5f ? 1f : -1f) * PanelBleed.y);
         go.SetActive(false);
         return img;
     }
@@ -2226,8 +2268,10 @@ public class GameManager : MonoBehaviour
         }
         if (!show) return;
 
-        finishBarTop.rectTransform.sizeDelta = new Vector2(400f, h);
-        finishBarBottom.rectTransform.sizeDelta = new Vector2(400f, h);
+        // the extra height is the part hanging off the screen; the inner edge
+        // still lands exactly h from the safe-area edge
+        finishBarTop.rectTransform.sizeDelta = new Vector2(400f, h + PanelBleed.y);
+        finishBarBottom.rectTransform.sizeDelta = new Vector2(400f, h + PanelBleed.y);
     }
 
     void PlayFinishCinematic(int place)
@@ -2263,7 +2307,7 @@ public class GameManager : MonoBehaviour
         float shut = Mathf.Clamp01(finishAnimT / 0.25f);
         if (finishBarTop != null && finishBarTop.gameObject.activeSelf)
         {
-            float h = Mathf.Lerp(BarHeight, 1200f, shut);
+            float h = Mathf.Lerp(BarHeight, 1200f, shut) + PanelBleed.y;
             finishBarTop.rectTransform.sizeDelta = new Vector2(400f, h);
             finishBarBottom.rectTransform.sizeDelta = new Vector2(400f, h);
         }
@@ -2765,7 +2809,10 @@ public class GameManager : MonoBehaviour
 
         Texture2D tex = Resources.Load<Texture2D>(iconPath);
 
-        Shader sh = Shader.Find("Sprites/Default");
+        // same reasoning as the locked-car material: ship the shader rather
+        // than hoping the stock one survived the build
+        Shader sh = Resources.Load<Shader>("Shaders/FlatIcon");
+        if (sh == null) sh = Shader.Find("Sprites/Default");
         if (sh == null) sh = Shader.Find("Unlit/Transparent");
         var mat = new Material(sh);
         if (tex != null) mat.mainTexture = tex;
@@ -3454,23 +3501,59 @@ public class GameManager : MonoBehaviour
         tires -= TokenBoxTireCost;
         PlayerPrefs.SetInt("Tires", tires);
 
-        // always a brand token, 1-5, weighted toward the cheaper marques
-        float r = Random.value;
-        Currency cur = r < 0.34f ? Currency.Caldera
-                     : r < 0.64f ? Currency.Cyber
-                     : r < 0.87f ? Currency.Tempasta
-                     : Currency.Vettura;
+        // a brand token, 1-5, weighted toward the cheaper marques - but only
+        // from the marques that still have a car left to buy
+        var pool = new List<Currency>();
+        var weights = new List<float>();
+        void Consider(Currency c, float w)
+        {
+            if (!TokenStillUseful(c)) return;
+            pool.Add(c);
+            weights.Add(w);
+        }
+        Consider(Currency.Caldera, 34f);
+        Consider(Currency.Cyber, 30f);
+        Consider(Currency.Tempasta, 23f);
+        Consider(Currency.Vettura, 13f);
+
         int amount = Random.Range(1, 6);
-        SetToken(cur, GetToken(cur) + amount);
+        Currency cur = Currency.Coins;
+        if (pool.Count > 0)
+        {
+            float total = 0f;
+            for (int i = 0; i < weights.Count; i++) total += weights[i];
+            float roll = Random.value * total;
+            cur = pool[pool.Count - 1];
+            for (int i = 0; i < pool.Count; i++)
+            {
+                roll -= weights[i];
+                if (roll <= 0f) { cur = pool[i]; break; }
+            }
+        }
+
+        if (cur == Currency.Coins)
+        {
+            // every marque collected: the box pays out in coins
+            int paid = CoinsInsteadOfTokens(amount);
+            totalCoins += paid;
+            PlayerPrefs.SetInt("Coins", totalCoins);
+            pendingBoxText = "+" + paid + " COINS";
+        }
+        else
+        {
+            SetToken(cur, GetToken(cur) + amount);
+            pendingBoxText = "+" + amount + " " + TokenNames[(int)cur];
+        }
 
         pendingBoxCurrency = cur;
-        pendingBoxIsToken = true;
-        pendingBoxText = "+" + amount + " " + TokenNames[(int)cur];
+        pendingBoxIsToken = cur != Currency.Coins;
         pendingBoxColor = TokenColors[(int)cur];
 
         // spawn the token model inside the blue box so it rises out
         if (boxPrizeGo != null) Destroy(boxPrizeGo);
-        boxPrizeGo = BuildTokenIcon(cur, tokenBoxRoot.transform,
+        boxPrizeGo = BuildIconObject(
+            cur == Currency.Coins ? CoinIconPath : TokenIcons[(int)cur],
+            TokenColors[(int)cur], tokenBoxRoot.transform,
             tokenBoxRoot.transform.position + Vector3.up * 0.25f, 0.9f);
         SetLayerRecursively(boxPrizeGo, ShowcaseLayer);
         tokenBoxAnim.prizeItem = boxPrizeGo.transform;
@@ -3815,7 +3898,13 @@ public class GameManager : MonoBehaviour
     {
         if (lockedCarMat != null) return lockedCarMat;
 
-        Shader sh = Shader.Find("Universal Render Pipeline/Unlit");
+        // Loaded from Resources, NOT found by name. A build only ships
+        // shaders something references, so Shader.Find for a stock unlit
+        // shader works in the editor and comes back null on the phone - and
+        // the fallback lit shader still catches a specular sheen on every
+        // edge, which is why the locked cars were readable instead of black.
+        Shader sh = Resources.Load<Shader>("Shaders/FlatBlack");
+        if (sh == null) sh = Shader.Find("Universal Render Pipeline/Unlit");
         if (sh == null) sh = Shader.Find("Unlit/Color");
         if (sh == null) sh = Shader.Find("Universal Render Pipeline/Lit");
 
@@ -4306,6 +4395,8 @@ public class GameManager : MonoBehaviour
         // corners are wanted here - the car drifts through them for the camera
         track.forceStraight = false;
         track.flatTrack = false;
+        track.curveTightness = 1f;
+        track.straightBias = 1f;
         track.behindDistance = lobbyBehindDistance;
         // the camera looks back down the road from in front of the car, so the
         // world has to already stretch a long way behind the starting point
@@ -4398,6 +4489,9 @@ public class GameManager : MonoBehaviour
         // comes in as the car pulls away
         audioMan.FadeMusicOut();
         raceCountdown = 3f;         // 3 - 2 - 1, then GO on release
+        // the car rolls in on rails through the countdown - a thumb on the
+        // screen must not be steering it before the flag drops
+        car.steeringLocked = true;
 
         if (mode == Mode.Endless)
         {
@@ -5346,7 +5440,7 @@ public class GameManager : MonoBehaviour
         var dimGo = new GameObject("Dim");
         dimGo.transform.SetParent(loginPanel.transform, false);
         var dim = dimGo.AddComponent<Image>();
-        dim.color = new Color(0f, 0f, 0f, 0.65f);
+        dim.color = new Color(0f, 0f, 0f, 0.8f);
         var dimRt = dim.rectTransform;
         dimRt.anchorMin = Vector2.zero;
         dimRt.anchorMax = Vector2.one;

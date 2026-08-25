@@ -32,6 +32,8 @@ public class CarController : MonoBehaviour
     public bool thumbControlsRear = true;
     [Tooltip("Flips all steering input (settings menu option).")]
     public bool invertSteering = false;
+    [Tooltip("Ignores the thumb entirely - used while a countdown is running.")]
+    public bool steeringLocked = false;
 
     [Header("Hover car")]
     public bool hoverMode = false;
@@ -463,8 +465,19 @@ public class CarController : MonoBehaviour
         CurrentSpeed = Mathf.Min(speedCeiling, CurrentSpeed + gain);
         if (CurrentSpeed > speedCeiling) CurrentSpeed = speedCeiling;
 
-        // --- input (no control while spinning out)
-        float steer = ReadSteerInput();
+        // Races run at a fixed pace - no ramp - so nothing was ever pulling
+        // the speed back down after a boost pad. The ceiling dropped away but
+        // the car stayed pinned to whatever top speed its upgrades allowed,
+        // for the rest of the race. Bots never showed it because they run
+        // their own pacing.
+        if (speedGainPerSecond <= 0f && pendingBoost <= 0f && boostBonus <= 0f
+            && CurrentSpeed > baseSpeed)
+        {
+            CurrentSpeed = Mathf.MoveTowards(CurrentSpeed, baseSpeed, boostFadeRate * dt);
+        }
+
+        // --- input (no control while spinning out, or before the lights go)
+        float steer = steeringLocked ? 0f : ReadSteerInput();
         if (invertSteering) steer = -steer;
 
         // the thumb is eased in, so the car leans into a slide instead of
@@ -566,8 +579,17 @@ public class CarController : MonoBehaviour
         // added on top so they visibly answer the steering.
         if (wheelSpin != null && !hoverMode)
         {
-            wheelSpin.steerAngle = Mathf.Clamp(
-                -smoothedDriftYaw + steer * frontWheelSteerAngle * 0.35f, -45f, 45f);
+            // Through an oil spin the body angle is driven by the spin, not by
+            // the drift, so the value below stops changing and the wheels sit
+            // locked at whatever angle they were on. Ease them straight
+            // instead - a spinning car has no steering input anyway.
+            float target = spinTimer > 0f
+                ? 0f
+                : Mathf.Clamp(-smoothedDriftYaw + steer * frontWheelSteerAngle * 0.35f,
+                              -45f, 45f);
+            wheelSpin.steerAngle = spinTimer > 0f
+                ? Mathf.MoveTowards(wheelSpin.steerAngle, target, 180f * dt)
+                : target;
         }
 
         // --- crashes
@@ -1013,21 +1035,51 @@ public class CarController : MonoBehaviour
             // Anything that carries branding is hidden outright: badges,
             // model lettering, maker emblems, sponsor stickers.
             string objName = r.gameObject.name.ToLowerInvariant();
-            if (objName.Contains("decal") || objName.Contains("logo")
-                || objName.Contains("badge") || objName.Contains("text")
-                || objName.Contains("emblem") || objName.Contains("sticker")
+
+            // "decal" is unambiguous - a part called that IS the lettering,
+            // however big it is. Some models run stripes and text the length
+            // of the whole body as a single mesh.
+            bool isDecalPart = objName.Contains("decal") || objName.Contains("sticker")
+                            || objName.Contains("numberplate")
+                            || objName.Contains("licence") || objName.Contains("license");
+
+            // The vaguer words get a size test. Models name whole panels -
+            // and whole windows - things like "text" or "brand", and hiding
+            // those took the glass out of the car. A badge is always small.
+            bool smallEnough = r.bounds.size.magnitude < body.size.magnitude * 0.2f;
+            bool isBrandingPart = smallEnough &&
+                (objName.Contains("logo") || objName.Contains("badge")
+                || objName.Contains("text") || objName.Contains("emblem")
                 || objName.Contains("brand") || objName.Contains("marque")
-                || objName.Contains("letter") || objName.Contains("numberplate")
-                || objName.Contains("licence") || objName.Contains("license"))
+                || objName.Contains("letter"));
+
+            if (isDecalPart || isBrandingPart)
             {
                 r.enabled = false;
                 continue;
             }
 
-            // anything sitting below the car's midline is not a window
-            if (r.bounds.center.y < midHeight) continue;
-
             Material[] mats = r.sharedMaterials;
+            bool hasGlass = false;
+            for (int g = 0; g < mats.Length; g++)
+            {
+                if (mats[g] == null) continue;
+                string mn = mats[g].name.ToLowerInvariant();
+                if (mn.Contains("window") || mn.Contains("glass")
+                    || mn.Contains("windshield") || mn.Contains("windscreen"))
+                {
+                    hasGlass = true;
+                    break;
+                }
+            }
+
+            // Glass is glass wherever it sits. The height test exists to stop
+            // low bodywork being taken for a window, but a rear screen on a
+            // low car sits under the midline and was skipped entirely - left
+            // with whatever the import gave it, which on some models is
+            // nothing you can see.
+            if (hasGlass) r.enabled = true;
+            else if (r.bounds.center.y < midHeight) continue;
             bool changed = false;
             for (int i = 0; i < mats.Length; i++)
             {

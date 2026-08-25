@@ -17,6 +17,139 @@ public class TrackGenerator : MonoBehaviour
     [Header("Road")]
     public float roadWidth = 11f;
     public float aheadDistance = 320f;
+
+    [Tooltip("Above 1 the corners come tighter and hold for longer.")]
+    public float curveTightness = 1f;
+    [Tooltip("Below 1 the straights between corners get shorter.")]
+    public float straightBias = 1f;
+    // Samples get pruned a few dozen metres behind the car, so they cannot
+    // answer "is there already road over there?" about a loop the track made
+    // three hundred metres ago. This trail is a cheap breadcrumb of where the
+    // road has been - one point every 8m for the last kilometre and a half,
+    // about two hundred entries.
+    struct TrailPoint { public Vector3 pos; public float dist; }
+    readonly List<TrailPoint> trail = new List<TrailPoint>();
+    const float TrailSpacing = 8f;
+    const float TrailMemory = 1600f;
+    float nextTrailAt;
+
+    // Where the road actually is, bucketed by position. RoadClearCoarse walks
+    // the sample list every tenth entry, which is both slow to call per blade
+    // of grass and coarse enough to miss a road passing between two checked
+    // points. This is exact and costs nine dictionary lookups.
+    const float RoadCell = 12f;
+    readonly Dictionary<long, List<TrailPoint>> roadGrid = new Dictionary<long, List<TrailPoint>>();
+    float lastRoadPrune;
+
+    static long CellKeyAt(Vector3 p, float size)
+    {
+        long cx = (long)Mathf.Floor(p.x / size);
+        long cz = (long)Mathf.Floor(p.z / size);
+        return (cx << 32) ^ (cz & 0xffffffffL);
+    }
+
+    float nextRoadMarkAt;
+
+    void MarkRoadCell()
+    {
+        // every third metre is plenty: the clearance being tested against is
+        // several metres, and thinning the list keeps the per-blade grass
+        // check cheap
+        if (frontDistance < nextRoadMarkAt) return;
+        nextRoadMarkAt = frontDistance + 3f;
+
+        long k = CellKeyAt(frontPos, RoadCell);
+        if (!roadGrid.TryGetValue(k, out List<TrailPoint> list))
+        {
+            list = new List<TrailPoint>();
+            roadGrid[k] = list;
+        }
+        list.Add(new TrailPoint { pos = frontPos, dist = frontDistance });
+
+        // drop cells the car left behind a long time ago
+        if (frontDistance - lastRoadPrune < 200f) return;
+        lastRoadPrune = frontDistance;
+        var stale = new List<long>();
+        foreach (var kv in roadGrid)
+        {
+            if (frontDistance - kv.Value[kv.Value.Count - 1].dist > TrailMemory) stale.Add(kv.Key);
+        }
+        for (int i = 0; i < stale.Count; i++) roadGrid.Remove(stale[i]);
+    }
+
+    /// <summary>
+    /// True if a spot is clear of every piece of road within memory - the one
+    /// being built ahead, the one underfoot, and any the track laid earlier.
+    /// </summary>
+    public bool ClearOfAllRoad(Vector3 spot, float clearance)
+    {
+        float sq = clearance * clearance;
+        for (int dx = -1; dx <= 1; dx++)
+        {
+            for (int dz = -1; dz <= 1; dz++)
+            {
+                long k = CellKeyAt(spot + new Vector3(dx * RoadCell, 0f, dz * RoadCell), RoadCell);
+                if (!roadGrid.TryGetValue(k, out List<TrailPoint> list)) continue;
+                for (int i = 0; i < list.Count; i++)
+                {
+                    Vector3 d = list[i].pos - spot;
+                    if (Mathf.Abs(d.y) > 10f) continue;     // a loop above or below
+                    d.y = 0f;
+                    if (d.sqrMagnitude < sq) return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    void RecordTrail()
+    {
+        if (frontDistance < nextTrailAt) return;
+        nextTrailAt = frontDistance + TrailSpacing;
+        trail.Add(new TrailPoint { pos = frontPos, dist = frontDistance });
+
+        int drop = 0;
+        while (drop < trail.Count && frontDistance - trail[drop].dist > TrailMemory) drop++;
+        if (drop > 0) trail.RemoveRange(0, drop);
+    }
+
+    /// <summary>
+    /// True if this spot lands on a piece of road the track has already laid.
+    /// Road from the last couple of hundred metres is ignored - that is the
+    /// stretch the car is still on, and it is obviously close by.
+    /// </summary>
+    bool HitsOldRoad(Vector3 p, float atDistance)
+    {
+        float clear = roadWidth + 8f;
+        float sq = clear * clear;
+        for (int i = 0; i < trail.Count; i++)
+        {
+            TrailPoint tp = trail[i];
+            if (atDistance - tp.dist < 220f) break;       // the list is in order
+            if (Mathf.Abs(tp.pos.y - p.y) > 14f) continue; // a different level
+            Vector3 d = tp.pos - p;
+            d.y = 0f;
+            if (d.sqrMagnitude < sq) return true;
+        }
+        return false;
+    }
+
+    /// <summary>Walks a planned corner and reports whether it crosses itself.</summary>
+    bool ArcWouldCross(float curvature, float length)
+    {
+        Vector3 p = frontPos;
+        float h = headingDeg;
+        const float Step = 5f;
+        for (float d = Step; d <= length; d += Step)
+        {
+            h += curvature * Step;
+            p += Quaternion.Euler(0f, h, 0f) * Vector3.forward * Step;
+            if (HitsOldRoad(p, frontDistance + d)) return true;
+        }
+        return false;
+    }
+
+    float netTurnDeg;      // running total of turning, to stop the road looping
     public float behindDistance = 45f;
     [Tooltip("How much road exists behind the car at the start line.")]
     public float roadBehindStart = 40f;
@@ -410,6 +543,12 @@ public class TrackGenerator : MonoBehaviour
         chunks.Clear();
         decorations.Clear();
         decoGrid.Clear();
+        netTurnDeg = 0f;
+        trail.Clear();
+        nextTrailAt = 0f;
+        roadGrid.Clear();
+        lastRoadPrune = 0f;
+        nextRoadMarkAt = 0f;
         coins.Clear();
         traffic.Clear();
         powerUps.Clear();
@@ -551,6 +690,8 @@ public class TrackGenerator : MonoBehaviour
         Vector3 step = Quaternion.Euler(0f, headingDeg, 0f) * Vector3.forward * SampleSpacing;
         step.y = currentSlope * SampleSpacing;
         frontPos += step;
+        RecordTrail();
+        MarkRoadCell();
         ClearDecorationsAt(frontPos);
         frontDistance += SampleSpacing;
         segmentRemaining -= SampleSpacing;
@@ -584,12 +725,21 @@ public class TrackGenerator : MonoBehaviour
         if (lastWasCorner)
         {
             segmentCurvature = 0f;
-            segmentRemaining = Mathf.Lerp(45f, 16f, t) * Random.Range(0.6f, 1.4f);
+            // short breather between corners rather than a straight
+            segmentRemaining = Mathf.Lerp(22f, 9f, t) * Random.Range(0.6f, 1.4f) * straightBias;
             lastWasCorner = false;
         }
         else
         {
             int dir = Random.value < 0.7f ? -lastCornerDir : lastCornerDir;
+
+            // Enough turning one way and the road comes back round into
+            // itself - you drive through a corner built two corners ago. Past
+            // a bend and a half of net rotation the next corner must go the
+            // other way. The pass is exempt: spiralling is the point up there,
+            // and its radius is wide enough that its loops never meet.
+            if (netTurnDeg > 165f) dir = -1;
+            else if (netTurnDeg < -165f) dir = 1;
 
             // On the mountain the road is a pass winding COUNTERCLOCKWISE up
             // and around it, so nearly every corner turns left. The mountain
@@ -602,13 +752,44 @@ public class TrackGenerator : MonoBehaviour
             // they were on a moment ago.
             float radius = mountain
                 ? Random.Range(150f, 260f)
-                : Mathf.Lerp(58f, 26f, t) * Random.Range(0.8f, 1.25f);
-            float angle = Random.Range(Mathf.Lerp(30f, 45f, t), Mathf.Lerp(60f, 110f, t));
+                : Mathf.Lerp(42f, 24f, t) * Random.Range(0.8f, 1.25f) / curveTightness;
+            // corners that are worth drifting: they come round far enough that
+            // the car has to be sideways through them, not just aimed
+            float angle = Random.Range(Mathf.Lerp(45f, 60f, t), Mathf.Lerp(85f, 125f, t))
+                          * (mountain ? 1f : curveTightness);
 
             segmentCurvature = dir * Mathf.Rad2Deg / radius;
             segmentRemaining = angle / Mathf.Abs(segmentCurvature);
+
+            // Look before turning. If this corner would put road on top of
+            // road the track laid earlier, try the other way, and if that is
+            // no better run straight for a while and let the geometry open
+            // up. This is the only check that actually sees the old road -
+            // everything else is a heuristic about how much the track has
+            // turned lately.
+            if (!mountain && ArcWouldCross(segmentCurvature, segmentRemaining))
+            {
+                segmentCurvature = -segmentCurvature;
+                dir = -dir;
+                if (ArcWouldCross(segmentCurvature, segmentRemaining))
+                {
+                    segmentCurvature = 0f;
+                    segmentRemaining = 70f;
+                    lastWasCorner = false;
+                    netTurnDeg *= 0.5f;
+                    return;
+                }
+            }
+
             lastWasCorner = true;
             lastCornerDir = dir;
+
+            // Decays with DISTANCE, not per corner. Decaying per corner meant
+            // a run of same-way bends settled at about 165 degrees and never
+            // reached the limit, so the guard never fired.
+            netTurnDeg = mountain
+                ? 0f
+                : netTurnDeg * Mathf.Exp(-segmentRemaining / 600f) + dir * angle;
         }
     }
 
@@ -1247,9 +1428,7 @@ public class TrackGenerator : MonoBehaviour
                 Bounds b = rends[0].bounds;
                 for (int i = 1; i < rends.Length; i++) b.Encapsulate(rends[i].bounds);
                 float maxDim = Mathf.Max(b.size.x, b.size.y, b.size.z, 0.001f);
-                float k = 1.1f / maxDim;
-                Vector3 s0 = model.transform.localScale;
-                Vector3 sc = s0 * k;
+                Vector3 sc = model.transform.localScale * (1.1f / maxDim);
 
                 // Fatten the tyre along its axle. Scaled evenly it reads as a
                 // disc on edge from the driver's view; a chunkier one looks
@@ -1259,17 +1438,18 @@ public class TrackGenerator : MonoBehaviour
                 else sc.z *= 1.7f;
                 model.transform.localScale = sc;
 
-                // centring has to follow the per-axis scale, not the flat one
-                Vector3 centerLocal = root.transform.InverseTransformPoint(b.center);
-                model.transform.localPosition = new Vector3(
-                    -centerLocal.x * sc.x / Mathf.Max(s0.x, 0.0001f),
-                    -centerLocal.y * sc.y / Mathf.Max(s0.y, 0.0001f),
-                    -centerLocal.z * sc.z / Mathf.Max(s0.z, 0.0001f));
                 // stand upright: thinnest axis across the road
                 if (b.size.y <= b.size.x && b.size.y <= b.size.z)
                     model.transform.localRotation = model.transform.localRotation * Quaternion.Euler(0f, 0f, 90f);
                 else if (b.size.z <= b.size.x && b.size.z <= b.size.y)
                     model.transform.localRotation = model.transform.localRotation * Quaternion.Euler(0f, 90f, 0f);
+
+                // Centre it LAST. Scaling and turning both shift the mesh off
+                // the pivot, and the pickup spins about that pivot - so an
+                // off-centre model swings from side to side as it turns.
+                b = rends[0].bounds;
+                for (int i = 1; i < rends.Length; i++) b.Encapsulate(rends[i].bounds);
+                model.transform.position += root.transform.position - b.center;
                 foreach (var r in rends) r.sharedMaterial = oilMat; // near-black rubber
             }
         }
@@ -2082,10 +2262,11 @@ public class TrackGenerator : MonoBehaviour
                 }
                 Vector3 root = pos + right * (outward * side);
 
-                // The road loops back on itself, so grass this far out can land
-                // on another stretch of tarmac. Anything past the immediate
-                // verge gets checked against the whole track.
-                if (outward - half > 10f && !RoadClearCoarse(root, half + 2.5f)) continue;
+                // EVERY blade is checked, not just the far ones. Corners are
+                // tight enough now that their radius is smaller than the reach
+                // of the grass, so a blade a few metres out on the inside of a
+                // bend lands squarely on the road further round it.
+                if (!ClearOfAllRoad(root, half + 1.6f)) continue;
 
                 // taller further out, so distant grass still reads on screen
                 float outFrac = Mathf.Clamp01((outward - half) / grassReach);
