@@ -120,7 +120,11 @@ public class TrackGenerator : MonoBehaviour
     /// </summary>
     bool HitsOldRoad(Vector3 p, float atDistance)
     {
-        float clear = roadWidth + 8f;
+        // Generous enough that two stretches of road never look merged, mean
+        // enough that ordinary corners still pass. At 1.6 widths plus 10 the
+        // race circuits were refusing nearly every bend and falling back to
+        // the straight - which is why race tracks went flat again.
+        float clear = roadWidth + 9f;
         float sq = clear * clear;
         for (int i = 0; i < trail.Count; i++)
         {
@@ -740,7 +744,7 @@ public class TrackGenerator : MonoBehaviour
             // no crossing check can drive straight into a loop the track made
             // earlier, which is why it turned up right after a respawn. A
             // gentle bend is a small price for not intersecting.
-            if (!mountain && !forceStraight && ArcWouldCross(0f, segmentRemaining + 40f))
+            if (!mountain && !forceStraight && ArcWouldCross(0f, segmentRemaining + 25f))
             {
                 float away = Mathf.Rad2Deg / 55f;
                 if (!ArcWouldCross(-away, 70f)) segmentCurvature = -away;
@@ -816,22 +820,25 @@ public class TrackGenerator : MonoBehaviour
             segmentRemaining = angle / Mathf.Abs(segmentCurvature);
 
             // Look before turning. If this corner would put road on top of
-            // road the track laid earlier, try the other way, and if that is
-            // no better run straight for a while and let the geometry open
-            // up. This is the only check that actually sees the old road -
-            // everything else is a heuristic about how much the track has
-            // turned lately.
-            if (!mountain && ArcWouldCross(segmentCurvature, segmentRemaining))
+            // road laid earlier, turn the other way instead.
+            //
+            // And if BOTH ways look bad, still corner - just shorter and
+            // wider. Falling back to a straight here is what flattened whole
+            // race circuits: one refusal produced a straight, which produced
+            // geometry where the next corner was refused too, and the track
+            // never recovered. A corner that clips an old stretch of road is a
+            // far smaller problem than a track with no corners in it.
+            if (!mountain && ArcWouldCross(segmentCurvature, segmentRemaining + 25f))
             {
                 segmentCurvature = -segmentCurvature;
                 dir = -dir;
-                if (ArcWouldCross(segmentCurvature, segmentRemaining))
+                if (ArcWouldCross(segmentCurvature, segmentRemaining + 25f))
                 {
-                    segmentCurvature = 0f;
-                    segmentRemaining = 70f;
-                    lastWasCorner = false;
-                    netTurnDeg *= 0.5f;
-                    return;
+                    // whichever way the track has been turning least
+                    dir = netTurnDeg > 0f ? -1 : 1;
+                    float gentle = Mathf.Lerp(52f, 34f, t);
+                    segmentCurvature = dir * Mathf.Rad2Deg / gentle;
+                    segmentRemaining = 45f / Mathf.Abs(segmentCurvature);
                 }
             }
 
@@ -3321,9 +3328,12 @@ public class TrackGenerator : MonoBehaviour
     /// </summary>
     void ClearDecorationsAt(Vector3 roadPos)
     {
-        // wider than the tarmac: a trunk on the very edge still puts branches
-        // over the road, which reads as "in the way" just as much
-        float clear = roadWidth * 0.5f + 6f;
+        // Only what is genuinely ON the road. At +6 this reached past where
+        // trees are legitimately planted, so the sweep deleted the roadside as
+        // the track was laid past it - trees vanishing in front of you. The
+        // placement check already keeps them clear; this is only the backstop
+        // for road that arrives later.
+        float clear = roadWidth * 0.5f + 2f;
         float sq = clear * clear;
 
         for (int dx = -1; dx <= 1; dx++)

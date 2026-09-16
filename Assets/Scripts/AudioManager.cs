@@ -22,6 +22,7 @@ public class AudioManager : MonoBehaviour
 
     AudioClip engineClip, engineEvClip, skidClip, scrapeClip, crashClip, whooshClip, slipClip, tapClip, coinClip, musicClip, timeTravelClip, popClip;
     AudioClip gameMusicClip, beepClip, goClip, powerUpClip, boingClip, smashClip, finishWhooshClip, wheelTickClip;
+    AudioClip explosionClip;
 
     // --- music crossfading
     AudioClip queuedMusic;      // waiting for the current track to fade out
@@ -57,6 +58,7 @@ public class AudioManager : MonoBehaviour
         // lose to a failed import or a near-silent normalisation pass, and a
         // click you cannot hear is the same as no click at all.
         wheelTickClip = MakeClickClip();
+        explosionClip = MakeExplosionClip();
         beepClip = Resources.Load<AudioClip>("Audio/count_beep");
         goClip = Resources.Load<AudioClip>("Audio/count_go");
         // the driving theme - a trimmed wav so the loop has no gap
@@ -80,6 +82,44 @@ public class AudioManager : MonoBehaviour
         // start silent; loops start on demand
         engineSource.volume = 0f;
         skidSource.volume = 0f;
+    }
+
+    /// <summary>
+    /// The crash fireball: a cracking transient over a low boom that rolls
+    /// away. Generated rather than imported for the same reason the wheel
+    /// click is - nothing to lose to a failed import or a build.
+    /// </summary>
+    static AudioClip MakeExplosionClip()
+    {
+        const int rate = 44100;
+        int n = (int)(rate * 1.5f);
+        var data = new float[n];
+
+        float lowPhase = 0f;
+        float rumble = 0f;
+        for (int i = 0; i < n; i++)
+        {
+            float t = (float)i / rate;
+
+            // the initial crack: broadband noise, gone in a tenth of a second
+            float crack = Random.Range(-1f, 1f) * Mathf.Exp(-t * 26f);
+
+            // the body: a sine sweeping from 110Hz down to about 35, which is
+            // what gives it weight rather than just volume
+            float freq = Mathf.Lerp(110f, 35f, Mathf.Clamp01(t * 1.6f));
+            lowPhase += 2f * Mathf.PI * freq / rate;
+            float boom = Mathf.Sin(lowPhase) * Mathf.Exp(-t * 2.6f);
+
+            // and a tail of filtered noise so it does not end on a clean tone
+            rumble = Mathf.Lerp(rumble, Random.Range(-1f, 1f), 0.08f);
+            float tail = rumble * Mathf.Exp(-t * 3.4f) * 0.5f;
+
+            data[i] = Mathf.Clamp(crack * 0.7f + boom * 0.85f + tail, -1f, 1f);
+        }
+
+        var clip = AudioClip.Create("explosion", n, 1, rate, false);
+        clip.SetData(data, 0);
+        return clip;
     }
 
     /// <summary>A hard, dry knock - the peg hitting the flapper.</summary>
@@ -161,6 +201,7 @@ public class AudioManager : MonoBehaviour
     public void PlayBoing() { PlayOneShot(boingClip, 0.85f); }
     public void PlaySmash() { PlayOneShot(smashClip, 0.9f); }
     public void PlayFinishWhoosh() { PlayOneShot(finishWhooshClip, 1.2f); }
+    public void PlayExplosion() { PlayOneShot(explosionClip, 1.3f); }
 
     /// <summary>
     /// One peg of the wheel passing the pointer. It runs on its own source

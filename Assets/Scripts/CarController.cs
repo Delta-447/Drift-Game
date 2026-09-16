@@ -167,6 +167,7 @@ public class CarController : MonoBehaviour
     float noTouchTime;
     float poseFade = 1f;            // 1 = posed by the drift, 0 = squared up
     float prevLateral;              // last frame's sideways speed, for rate limiting
+    float coastLateral;             // the part of the slide that IS going straight
     float headingOffset;                // degrees held off the road's heading
     float shownHeadingOffset;           // the smoothed version actually applied
     float lastRoadYaw;
@@ -454,6 +455,7 @@ public class CarController : MonoBehaviour
         steerAssistRaw = 1f;
         poseFade = 1f;
         prevLateral = 0f;
+        coastLateral = 0f;
         noTouchTime = 0f;
         headingOffset = 0f;
         shownHeadingOffset = 0f;
@@ -626,8 +628,29 @@ public class CarController : MonoBehaviour
         float steerGrip = Mathf.Lerp(gripDecayFree, gripDecaySteering,
                                      Mathf.Clamp01(Mathf.Abs(steer) / 0.3f));
         float decay = spinTimer > 0f ? 0.6f : steerGrip;
-        // the other half of it: grip pulling the slide back to zero is what
-        // walks the car around the corner on its own
+        // The slide splits in two while coasting. One part is the car simply
+        // holding a straight line as the road bends away - that has to stay,
+        // it IS the no-self-steer behaviour. The other is whatever drift the
+        // player had going when they let go, and leaving that in place is what
+        // looked like the car scrubbing sideways through the corner on its
+        // own. Grip is applied to the second part only, so the drift bleeds
+        // away and the straight line does not.
+        if (steerAssist < 0.999f)
+        {
+            coastLateral += centrifugal * dt;
+            float carried = LateralVelocity - coastLateral;
+            carried *= Mathf.Exp(-gripDecayFree * dt);
+            LateralVelocity = coastLateral + carried;
+        }
+        else
+        {
+            // Zero, NOT the current sideways speed. Seeding it with whatever
+            // drift was happening at the moment of release told the maths that
+            // the drift itself was "going straight", so it was never bled off
+            // and the car kept sliding in whatever direction it last went.
+            coastLateral = 0f;
+        }
+
         decay *= steerAssist;
         LateralVelocity *= Mathf.Exp(-decay * dt);
 
@@ -1429,6 +1452,58 @@ public class CarController : MonoBehaviour
     public void CapSpeed(float limit)
     {
         CurrentSpeed = Mathf.Clamp(CurrentSpeed, baseSpeed, Mathf.Max(baseSpeed, limit));
+    }
+
+    static Material scorchedMat;
+    bool scorched;
+
+    /// <summary>True once the car has been burnt and needs rebuilding.</summary>
+    public bool IsScorched { get { return scorched; } }
+
+    /// <summary>
+    /// Chars the car after the fireball. Every material slot on every renderer,
+    /// because a car is a multi-material mesh and replacing only the first
+    /// leaves the glass and lights looking showroom-fresh on a wreck.
+    /// </summary>
+    public void Scorch()
+    {
+        if (carVisual == null) return;
+        scorched = true;
+
+        if (scorchedMat == null)
+        {
+            Shader sh = Resources.Load<Shader>("Shaders/FlatBlack");
+            if (sh == null) sh = Shader.Find("Universal Render Pipeline/Unlit");
+            if (sh == null) sh = Shader.Find("Universal Render Pipeline/Lit");
+            scorchedMat = new Material(sh);
+            var soot = new Color(0.055f, 0.05f, 0.05f, 1f);
+            scorchedMat.color = soot;
+            if (scorchedMat.HasProperty("_BaseColor")) scorchedMat.SetColor("_BaseColor", soot);
+            if (scorchedMat.HasProperty("_Metallic")) scorchedMat.SetFloat("_Metallic", 0f);
+            if (scorchedMat.HasProperty("_Smoothness")) scorchedMat.SetFloat("_Smoothness", 0.05f);
+        }
+
+        foreach (var r in carVisual.GetComponentsInChildren<Renderer>(true))
+        {
+            var slots = new Material[Mathf.Max(1, r.sharedMaterials.Length)];
+            for (int i = 0; i < slots.Length; i++) slots[i] = scorchedMat;
+            r.sharedMaterials = slots;
+        }
+    }
+
+    /// <summary>Called once the car has been rebuilt clean.</summary>
+    public void ClearScorch() { scorched = false; }
+
+    /// <summary>
+    /// Sets the speed a run actually begins at. Without this the car simply
+    /// carries whatever speed it happened to have: the lobby's slow cruise
+    /// into a fresh run, or the speed you died at into a retry.
+    /// </summary>
+    public void LaunchAt(float speed)
+    {
+        CurrentSpeed = speed;
+        pendingBoost = 0f;
+        boostBonus = 0f;
     }
 
     /// <summary>Cancels any queued or active boost.</summary>

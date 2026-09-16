@@ -72,17 +72,16 @@ public class GameManager : MonoBehaviour
     // has to be reliably tunable from code lives here instead.
 
     /// <summary>Speed at the start of an endless run, in m/s.</summary>
-    // 73 mph of real travel, which the speedometer shows as about 112. The
-    // run now opens at close to the pace it finishes at - the ramp is a last
-    // squeeze rather than a climb.
-    const float RunBaseSpeed = 32.6f;
+    // 45 mph of real travel, which the speedometer shows as about 70 - and
+    // leaves real room to climb, rather than opening a hair under the cap.
+    const float RunBaseSpeed = 20.3f;
     /// <summary>
     /// Top speed of an endless run before car bonuses. Pulled down from 96:
     /// starting at 55 and capping ten minutes later, a 96 top would mean
     /// climbing over 4 mph a minute - twice the old rate, not slower. A 78 cap
     /// keeps the climb gentle AND gets there in ten minutes.
     /// </summary>
-    const float RunMaxSpeed = 34.87f;   // 78 mph
+    const float RunMaxSpeed = 34.87f;   // 78 mph, shown as 120
     /// <summary>
     /// Derived, not typed in: whatever the two speeds above are, the car
     /// climbs between them at a constant rate and arrives exactly ten minutes
@@ -137,9 +136,16 @@ public class GameManager : MonoBehaviour
     /// </summary>
     const float AngleSeek = 3.4f;
 
+    /// <summary>
+    /// How fast the body swings to the angle the physics is asking for. This
+    /// is presentation, not handling - lower means the car rolls into and out
+    /// of a drift rather than snapping between poses.
+    /// </summary>
+    const float DriftRotationSpeed = 6f;
+
 
     /// <summary>Shown in the corner of the lobby. Bump it when you ship.</summary>
-    const string GameVersion = "V0.0.2";
+    const string GameVersion = "V0.0.3";
 
 
 
@@ -512,6 +518,7 @@ public class GameManager : MonoBehaviour
         car.driftHoldGrab = DriftHoldGrab;
         car.steerSmoothing = SteerSmoothing;
         car.angleSeek = AngleSeek;
+        car.driftRotationSpeed = DriftRotationSpeed;
 
         // Speed and scoring are forced from code (see the constants above);
         // everything about how the car handles is left to the CarController.
@@ -847,6 +854,13 @@ public class GameManager : MonoBehaviour
         state = State.Menu;
         Time.timeScale = 1f;
         EndTutorialHints();
+
+        // the wreck does not follow you into the lobby
+        if (car != null && car.IsScorched)
+        {
+            EquipSelected();
+            car.ClearScorch();
+        }
         menuPanel.SetActive(true);
         settingsPanel.SetActive(false);
         garagePanel.SetActive(false);
@@ -1478,8 +1492,8 @@ public class GameManager : MonoBehaviour
         track.flatTrack = true;              // a level circuit, whatever the biome
         // A flat circuit with the stock corner mix reads as one long straight.
         // Tighter bends, held longer, with less road between them.
-        track.curveTightness = 1.15f;
-        track.straightBias = 0.6f;
+        track.curveTightness = 1.8f;
+        track.straightBias = 0.45f;
 
         // The biome goes in with the build request: Init generates the opening
         // stretch immediately, so a race in the city or the snow has to be
@@ -4317,6 +4331,17 @@ public class GameManager : MonoBehaviour
                 0f, root.transform.position.y - RobustFloor(rends), 0f);
         }
         m.transform.localPosition += new Vector3(0f, HeightFixFor(d.name), 0f);
+
+        // RobustFloor deliberately ignores stray low geometry so one dangling
+        // part cannot float a car. On a model whose whole underside sits below
+        // that robust line - a low splitter, a full floorpan - it seats the
+        // car into the ground instead. This is the backstop: measure what is
+        // actually lowest, and never let more than a few centimetres of the
+        // car end up under the road.
+        b = rends[0].bounds;
+        for (int i = 1; i < rends.Length; i++) b.Encapsulate(rends[i].bounds);
+        float sunk = root.transform.position.y - 0.06f - b.min.y;
+        if (sunk > 0f) m.transform.position += new Vector3(0f, sunk, 0f);
         return root;
     }
 
@@ -4504,7 +4529,10 @@ public class GameManager : MonoBehaviour
         track.spawnPowerUps = true;
         track.spawnTirePickups = true;
         track.forceStraight = false;
-        track.flatTrack = false;
+        // A race asks for a level circuit BEFORE this runs, and this was
+        // quietly switching it back on - so race tracks got hills, and rivals
+        // up the road appeared to float above the player.
+        if (mode != Mode.Race) track.flatTrack = false;
         // The opening flyby looks back past the car, so the world behind has
         // to stay put until the countdown is over - it is pruned back to the
         // normal distance the moment the race actually starts.
@@ -4533,12 +4561,25 @@ public class GameManager : MonoBehaviour
         rewindUsed = false;
         car.GrantMercy(0f);        // drop the lobby's endless immunity
         FinishCarSwapNow();        // and never start a run mid-changeover
+
+        // a burnt car needs its paint back - rebuilding the model is the only
+        // thing that restores the materials the scorch replaced
+        if (car.IsScorched)
+        {
+            EquipSelected();
+            car.ClearScorch();
+        }
         ApplyRunTrack();
         if (mode == Mode.Endless)
         {
             car.baseSpeed = runBaseSpeed;
             car.maxSpeed = runMaxSpeed + Cars[selectedCar].speedBonus;
             car.speedGainPerSecond = runSpeedGain;
+            // Every run begins at the run's own starting speed. Left alone the
+            // car just kept whatever it had - the lobby's slow cruise on a
+            // fresh run, or the speed you died at when you hit RETRY, which is
+            // why a retry launched you at full pace.
+            car.LaunchAt(runBaseSpeed);
             track.spawnObstacles = true;
             track.spawnTraffic = true;
             track.spawnBoostPads = false;
@@ -4688,6 +4729,12 @@ public class GameManager : MonoBehaviour
         pauseButton.SetActive(true);
         car.CenterLane();                                  // back to the middle
         track.ClearObstaclesAhead(car.DistanceTraveled, 80f); // clean runway
+        // a revive un-burns the car: it is back on the road, not a wreck
+        if (car.IsScorched)
+        {
+            EquipSelected();
+            car.ClearScorch();
+        }
         car.GrantMercy(2f);   // mercy window, but keep the speed you had
         // A boost still queued when you crashed would otherwise cash itself
         // in the instant you came back, firing the car straight to its
@@ -4717,8 +4764,16 @@ public class GameManager : MonoBehaviour
         UpdateQuest(7, 1, false);
         gameOverAt = Time.unscaledTime;
         pendingDrift = 0f; // unbanked combo dies with you
-        if (camFollow != null) camFollow.Shake(0.55f);
+        if (camFollow != null) camFollow.Shake(0.8f);
         audioMan.PlayCrash();
+
+        // the run goes out with a bang - at the body, not at the road surface
+        Vector3 blastAt = car.CarModelRoot != null
+            ? car.CarModelRoot.position + Vector3.up * 0.4f
+            : car.transform.position + Vector3.up * 0.7f;
+        CrashExplosion.Play(blastAt, 1.15f);
+        audioMan.PlayExplosion();
+        car.Scorch();      // and it stays burnt on the results screen
         audioMan.StopDriving();
         audioMan.PlayMenuMusic();
 
