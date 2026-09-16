@@ -172,7 +172,14 @@ public class RaceMode : MonoBehaviour
         // the field pulls away from a car you have stopped improving. Level 1
         // is a comfortable win in a stock car; level 20 needs the engine maxed
         // and a clean run through the boost pads.
-        float levelPace = 0.86f + level * 0.036f;   // 0.86 -> 1.54
+        // The engine upgrade is worth 0.55 m/s a level against a 24 m/s stock
+        // car - about 2.3% each - and there are twenty of both races and
+        // engine levels. So the field climbs at just under 2.3% a level: a
+        // race is winnable with one more upgrade than the last one needed, and
+        // not without it. Level 1 starts level with a stock car, which means
+        // out-driving them on the pads and the racing line rather than
+        // out-running them.
+        float levelPace = 0.985f + level * 0.0218f;   // 0.985 -> 1.40
 
         for (int i = 0; i < Opponents; i++)
         {

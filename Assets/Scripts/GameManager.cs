@@ -72,17 +72,76 @@ public class GameManager : MonoBehaviour
     // has to be reliably tunable from code lives here instead.
 
     /// <summary>Speed at the start of an endless run, in m/s.</summary>
-    // 45 mph, in m/s. The HUD can read in either unit, but the tuning is
-    // quoted in mph because that is how it was asked for.
-    const float RunBaseSpeed = 20.11f;
-    /// <summary>Top speed of an endless run before car bonuses.</summary>
-    const float RunMaxSpeed = 42.92f;   // 96 mph
-    /// <summary>m/s gained per second: 8 m/s over about six minutes.</summary>
-    const float RunSpeedGain = 0.0543f;  // 45 -> 96 mph over seven minutes
+    // 73 mph of real travel, which the speedometer shows as about 112. The
+    // run now opens at close to the pace it finishes at - the ramp is a last
+    // squeeze rather than a climb.
+    const float RunBaseSpeed = 32.6f;
+    /// <summary>
+    /// Top speed of an endless run before car bonuses. Pulled down from 96:
+    /// starting at 55 and capping ten minutes later, a 96 top would mean
+    /// climbing over 4 mph a minute - twice the old rate, not slower. A 78 cap
+    /// keeps the climb gentle AND gets there in ten minutes.
+    /// </summary>
+    const float RunMaxSpeed = 34.87f;   // 78 mph
+    /// <summary>
+    /// Derived, not typed in: whatever the two speeds above are, the car
+    /// climbs between them at a constant rate and arrives exactly ten minutes
+    /// into the run. Change either speed and the timing still holds.
+    /// </summary>
+    const float RunSpeedGain = (RunMaxSpeed - RunBaseSpeed) / 600f;
 
 
     /// <summary>Score per metre travelled, before multipliers.</summary>
     const float PointsPerMetre = 0.09f;
+
+    /// <summary>
+    /// Sideways speed, in m/s, at which a slide starts counting as a drift and
+    /// building combo. Well under the old 6.5: a tidy line through a corner is
+    /// a drift now, rather than only a deliberate kick of the tail.
+    /// </summary>
+    const float DriftScoreThreshold = 1.3f;
+
+    /// <summary>Combo points below this are banked quietly, with no fanfare.</summary>
+    const int DriftFlashMin = 8;
+
+    /// <summary>
+    /// Points a second while drifting, before the multiplier. Dropped from 30:
+    /// the threshold for what counts as a drift is now so low that the car is
+    /// scoring for most of a corner, and 30 a second on top of an x8
+    /// multiplier made everything else in the run irrelevant.
+    /// </summary>
+    const float DriftPointsPerSecond = 11f;
+
+    /// <summary>
+    /// How hard the game parks the car at a drift angle when you counter-steer.
+    /// 0 hands the angle entirely to the player; 3.2 was the old assisted feel.
+    /// </summary>
+    const float DriftHoldGrab = 0f;
+
+    /// <summary>
+    /// How fast the thumb's position reaches the car. Higher is more direct
+    /// and less filtered - the input lag was part of what felt like the car
+    /// being guided rather than steered.
+    /// </summary>
+    /// <summary>
+    /// Back to the value the game shipped with. Sharpening this was meant to
+    /// feel more direct and instead just let every small wobble through.
+    /// </summary>
+    const float SteerSmoothing = 15f;
+
+    /// <summary>
+    /// How firmly the slide settles to the angle the thumb is asking for.
+    /// This is the stabiliser: your finger picks the drift and the car holds
+    /// it there. Too weak and the car wanders and you spend the corner
+    /// correcting it, which is what reads as chop - 1.8 was too weak.
+    /// </summary>
+    const float AngleSeek = 3.4f;
+
+
+    /// <summary>Shown in the corner of the lobby. Bump it when you ship.</summary>
+    const string GameVersion = "V0.0.2";
+
+
 
     // kept as properties so the rest of the file reads the same as before
     float runSpeedGain { get { return RunSpeedGain; } }
@@ -300,7 +359,7 @@ public class GameManager : MonoBehaviour
     // Bump this string to wipe every save on the next launch - useful for
     // testing first-run flow and the new-high-score reveal. It only fires once
     // per token, so a player never loses progress twice to the same bump.
-    const string SaveResetToken = "reset-2026-08-21-cars";
+    const string SaveResetToken = "reset-2026-09-13-tutorial";
 
     static void WipeSaveOnce()
     {
@@ -440,6 +499,19 @@ public class GameManager : MonoBehaviour
         car.maxSpeed = runMaxSpeed;
         car.speedGainPerSecond = runSpeedGain;
         baseMaxSpeed = runMaxSpeed;
+
+        // How far the car has to step out before the slide SCORES. Forced from
+        // here for the same reason the speeds are: the value saved on the
+        // scene's CarController wins over the one in the code, so editing the
+        // field alone changes nothing.
+        car.driftThreshold = DriftScoreThreshold;
+        driftPointsPerSecond = DriftPointsPerSecond;
+
+        // The thumb owns the angle. Both of these are saved on the scene's
+        // CarController, so they have to be forced from here to take effect.
+        car.driftHoldGrab = DriftHoldGrab;
+        car.steerSmoothing = SteerSmoothing;
+        car.angleSeek = AngleSeek;
 
         // Speed and scoring are forced from code (see the constants above);
         // everything about how the car handles is left to the CarController.
@@ -737,9 +809,18 @@ public class GameManager : MonoBehaviour
         float flip = System.Array.IndexOf(BackwardsModels, d.name) >= 0 ? 180f : 0f;
         car.modelHeightFix = HeightFixFor(d.name);
         car.SetCarModel(d.path == null ? null : Resources.Load<GameObject>(d.path), d.yaw + flip);
-        car.baseSpeed = runBaseSpeed;
-        car.speedGainPerSecond = runSpeedGain;
-        car.maxSpeed = baseMaxSpeed + d.speedBonus;
+
+        // NOT during a race. A race runs at a fixed pace set by SetConstantSpeed,
+        // and stamping the endless speeds over it left the car with the endless
+        // base speed - which the oil spill then snapped it up to, because the
+        // spin-out floors the speed at baseSpeed. That is the "hit oil, jump to
+        // 112" bug: the floor was a speed the race never runs at.
+        if (mode != Mode.Race)
+        {
+            car.baseSpeed = runBaseSpeed;
+            car.speedGainPerSecond = runSpeedGain;
+            car.maxSpeed = baseMaxSpeed + d.speedBonus;
+        }
         carPointMult = d.pointMult;
         car.hoverMode = d.hover;
         audioMan.SetEngineStyle(d.hover);
@@ -765,6 +846,7 @@ public class GameManager : MonoBehaviour
         if (track != null) track.ClearFinishLine();
         state = State.Menu;
         Time.timeScale = 1f;
+        EndTutorialHints();
         menuPanel.SetActive(true);
         settingsPanel.SetActive(false);
         garagePanel.SetActive(false);
@@ -774,6 +856,7 @@ public class GameManager : MonoBehaviour
         revivePanel.SetActive(false);
         shopPanel.SetActive(false);
         creditsPanel.SetActive(false);
+        if (tutorialPanel != null) tutorialPanel.SetActive(false);
         if (unlockPanel != null) unlockPanel.SetActive(false);
         if (wheelPanel != null) wheelPanel.SetActive(false);
         if (racePanel != null) racePanel.SetActive(false);
@@ -966,12 +1049,22 @@ public class GameManager : MonoBehaviour
     void SetSensitivity(float v) { sensSetting = v; PlayerPrefs.SetFloat("Sensitivity", v); ApplySettings(); }
     void SetSfxVol(float v) { volSfx = v; PlayerPrefs.SetFloat("VolSfx", v); ApplySettings(); }
 
+    /// <summary>
+    /// The speedometer reads high on purpose. The car handles the way it does
+    /// at its real pace - which tops out around 78mph of actual travel - but
+    /// a drift game wants a big number on the dial, so the readout is scaled
+    /// to show 120 at full speed. Nothing else uses this: every piece of
+    /// tuning, and the physics, stay in true m/s.
+    /// </summary>
+    const float SpeedoScale = 120f / 78f;
+
     /// <summary>Speed in whichever unit the player picked, with its label.</summary>
     string SpeedLabel(float metresPerSecond)
     {
+        float shown = metresPerSecond * SpeedoScale;
         return useMph
-            ? Mathf.RoundToInt(metresPerSecond * 2.23694f) + " MPH"
-            : Mathf.RoundToInt(metresPerSecond * 3.6f) + " KM/H";
+            ? Mathf.RoundToInt(shown * 2.23694f) + " MPH"
+            : Mathf.RoundToInt(shown * 3.6f) + " KM/H";
     }
 
     void ToggleUnits()
@@ -1325,7 +1418,7 @@ public class GameManager : MonoBehaviour
     {
         int lv = RaceMode.Level(u);
         string value = u == RaceMode.Upgrade.CoinBonus ? RaceMode.CoinBonusLabel()
-                     : u == RaceMode.Upgrade.Speed ? "+" + Mathf.RoundToInt(RaceMode.SpeedBonus() * (useMph ? 2.23694f : 3.6f)) + (useMph ? " MPH" : " KM/H")
+                     : u == RaceMode.Upgrade.Speed ? "+" + Mathf.RoundToInt(RaceMode.SpeedBonus() * SpeedoScale * (useMph ? 2.23694f : 3.6f)) + (useMph ? " MPH" : " KM/H")
                      : "+" + Mathf.RoundToInt(RaceMode.Strength() * 100f) + "%";
         string cost = RaceMode.IsMaxed(u) ? "MAX" : RaceMode.CostOf(u).ToString();
         // the picture carries the meaning, so the text just states the numbers
@@ -1385,7 +1478,7 @@ public class GameManager : MonoBehaviour
         track.flatTrack = true;              // a level circuit, whatever the biome
         // A flat circuit with the stock corner mix reads as one long straight.
         // Tighter bends, held longer, with less road between them.
-        track.curveTightness = 1.3f;
+        track.curveTightness = 1.15f;
         track.straightBias = 0.6f;
 
         // The biome goes in with the build request: Init generates the opening
@@ -4648,6 +4741,7 @@ public class GameManager : MonoBehaviour
 
         string cause = result == CarController.TickResult.CrashedOffRoad
             ? "OFF THE ROAD" : "CRASHED";
+        EndTutorialHints();
         centerText.gameObject.SetActive(false);
         pauseButton.SetActive(false);
 
@@ -4867,7 +4961,9 @@ public class GameManager : MonoBehaviour
                 break;
             case TrackGenerator.PowerUpType.Springs:
                 springsT = seconds;
-                FlashBonus("SPRINGS! TAP TO JUMP", new Color(0.35f, 1f, 0.45f));
+                // the jump is a swipe now, not a tap - the old wording had
+                // players pressing the screen and wondering why nothing hopped
+                FlashBonus("SPRINGS! SWIPE UP TO JUMP", new Color(0.35f, 1f, 0.45f));
                 break;
         }
         // one recognisable "you picked something up" chime for every item
@@ -4896,6 +4992,7 @@ public class GameManager : MonoBehaviour
 
         if (mode == Mode.Race) TickRace(dt);
         else TickBiome(dt);
+        TickTutorial(dt);
         TickItems(dt);
         track.TickTraffic(dt, car.DistanceTraveled);
         CarController.TickResult result = car.Tick(dt);
@@ -4961,11 +5058,14 @@ public class GameManager : MonoBehaviour
         {
             int banked = Mathf.RoundToInt(pendingDrift);
             score += banked;
-            if (banked >= 50)
+            if (banked >= DriftFlashMin)
             {
                 FlashBonus("+" + banked + " DRIFT COMBO", new Color(0.35f, 0.85f, 1f));
-                // banking a good combo gives a satisfying little surge
-                car.Boost(Mathf.Min(3f, banked / 250f));
+                // A token surge only. This used to be worth up to 3 m/s, and
+                // with combos banking constantly it was quietly acting as a
+                // second accelerator on top of the ramp - the car reached its
+                // ceiling well before the ten minutes the ramp allows for.
+                car.Boost(Mathf.Min(0.9f, banked / 600f));
             }
             UpdateQuest(5, banked, true);
             pendingDrift = 0f;
@@ -5063,8 +5163,8 @@ public class GameManager : MonoBehaviour
 
     int DriftMultiplier()
     {
-        // +1 for every second of sustained drift, capped at x8
-        return 1 + Mathf.Min(7, (int)car.DriftTime);
+        // +1 for every half second of sustained drift, capped at x8
+        return 1 + Mathf.Min(7, (int)(car.DriftTime / 0.5f));
     }
 
     void FlashBonus(string message, Color color)
@@ -5241,7 +5341,17 @@ public class GameManager : MonoBehaviour
         // PLAY stands alone; everything else sits in a tidy two-column block
         // underneath, so the menu is not one long stack of identical bars.
         MakeButton(menuPanel.transform, "PLAY", 64,
-            new Vector2(0f, 30f), new Vector2(600f, 150f), StartRun);
+            new Vector2(0f, 30f), new Vector2(600f, 150f), PlayPressed);
+
+        // Build number, bottom right. The panel bleeds past the safe area, so
+        // a corner-anchored label has to come back in by the same amount or it
+        // sits off the edge of the screen.
+        var version = MakeText(menuPanel.transform, "Version", 44, TextAnchor.LowerRight,
+            new Vector2(1f, 0f),
+            new Vector2(-40f - PanelBleed.x, 34f + PanelBleed.y),
+            new Vector2(340f, 70f), true);
+        version.text = GameVersion;
+        version.color = new Color(1f, 1f, 1f, 0.28f);
 
         const float ColX = 152f;
         const float RowTop = -150f;
@@ -5817,6 +5927,176 @@ public class GameManager : MonoBehaviour
 
         BuildGameOverPanel(uiRoot);
         BuildBestPanel(uiRoot);
+        BuildTutorial(uiRoot);
+    }
+
+    // ------------------------------------------------------------- tutorial
+
+    const string TutorialKey = "TutorialSeen";
+    GameObject tutorialPanel;
+    Text tutorialHint;
+    int tutorialStep = -1;          // -1 = not coaching
+    float tutorialStepT;
+    bool tutorialRun;               // this run is the very first one
+
+    static bool TutorialSeen { get { return PlayerPrefs.GetInt(TutorialKey, 0) == 1; } }
+
+    void BuildTutorial(Transform uiRoot)
+    {
+        tutorialPanel = MakePanel(uiRoot, "TutorialPanel");
+
+        var dimGo = new GameObject("Dim");
+        dimGo.transform.SetParent(tutorialPanel.transform, false);
+        var dim = dimGo.AddComponent<Image>();
+        dim.color = new Color(0.02f, 0.01f, 0.06f, 0.88f);
+        var dimRt = dim.rectTransform;
+        dimRt.anchorMin = Vector2.zero;
+        dimRt.anchorMax = Vector2.one;
+        dimRt.offsetMin = dimRt.offsetMax = Vector2.zero;
+
+        MakeCard(tutorialPanel.transform, new Vector2(0f, 40f), new Vector2(1000f, 1320f),
+            new Color(0.13f, 0.09f, 0.2f, 0.97f));
+
+        var title = MakeText(tutorialPanel.transform, "TutTitle", 76, TextAnchor.MiddleCenter,
+            new Vector2(0.5f, 0.5f), new Vector2(0f, 560f), new Vector2(900f, 110f));
+        title.text = "HOW TO PLAY";
+        title.color = new Color(1f, 0.72f, 0.12f);
+
+        // Each line is a heading and a plain-font explanation underneath, so
+        // the important word is readable at a glance and the detail is there
+        // for anyone who wants it.
+        string[] heads = { "SLIDE TO STEER", "HOLD IT TO DRIFT", "SWIPE TO JUMP", "KEEP IT CLEAN" };
+        string[] bodies =
+        {
+            "Slide your thumb anywhere\non screen. No buttons.",
+            "Stay on the slide through a\ncorner and the tail steps out.",
+            "With springs, flick your\nthumb up to hop over things.",
+            "Drifts and near misses build\nyour combo. Crashing ends it.",
+        };
+
+        for (int i = 0; i < heads.Length; i++)
+        {
+            float y = 380f - i * 195f;
+            var h = MakeText(tutorialPanel.transform, "TutHead" + i, 42, TextAnchor.MiddleCenter,
+                new Vector2(0.5f, 0.5f), new Vector2(0f, y), new Vector2(900f, 60f));
+            h.text = heads[i];
+            h.color = new Color(0.55f, 0.95f, 1f);
+
+            var b = MakeText(tutorialPanel.transform, "TutBody" + i, 28, TextAnchor.UpperCenter,
+                new Vector2(0.5f, 0.5f), new Vector2(0f, y - 78f), new Vector2(860f, 110f), true);
+            b.horizontalOverflow = HorizontalWrapMode.Wrap;   // never run off the card
+            b.text = bodies[i];
+            b.color = new Color(1f, 1f, 1f, 0.85f);
+            b.lineSpacing = 1.15f;
+        }
+
+        MakeButton(tutorialPanel.transform, "LET'S DRIVE", 46,
+            new Vector2(0f, -540f), new Vector2(660f, 130f), CloseTutorial,
+            new Color(0.16f, 0.62f, 0.32f));
+
+        // the coaching line that runs during the first drive
+        tutorialHint = MakeText(uiRoot, "TutHint", 34, TextAnchor.MiddleCenter,
+            new Vector2(0.5f, 0f), new Vector2(0f, 330f), new Vector2(1000f, 90f));
+        tutorialHint.horizontalOverflow = HorizontalWrapMode.Wrap;
+        tutorialHint.color = new Color(1f, 1f, 1f, 0f);
+    }
+
+    /// <summary>PLAY. The very first time, the controls get explained first.</summary>
+    void PlayPressed()
+    {
+        if (TutorialSeen) { StartRun(); return; }
+
+        audioMan.PlayTap();
+        tutorialPanel.SetActive(true);
+        tutorialPanel.transform.SetAsLastSibling();
+    }
+
+    void CloseTutorial()
+    {
+        tutorialPanel.SetActive(false);
+        PlayerPrefs.SetInt(TutorialKey, 1);
+        PlayerPrefs.Save();
+
+        // the prompts carry on into the drive itself - reading about a drift
+        // and being told to do one as the corner arrives are different things
+        tutorialRun = true;
+        tutorialStep = 0;
+        tutorialStepT = 0f;
+        StartRun();
+    }
+
+    // Short. These are read at speed, in a display font that is wider than it
+    // looks, and MakeText does not wrap - a long line simply runs off the
+    // screen at both ends.
+    static readonly string[] TutorialPrompts =
+    {
+        "SLIDE TO STEER",
+        "HOLD IT THROUGH THE CORNER",
+        "NICE - THAT'S A DRIFT",
+        "GRAB COINS, DODGE THE REST",
+    };
+
+    /// <summary>
+    /// Walks the player through the controls on their first drive. Each step
+    /// waits for the thing it asked for rather than running on a timer, so
+    /// nobody is told "nice drift" before they have done one.
+    /// </summary>
+    void TickTutorial(float dt)
+    {
+        if (!tutorialRun || tutorialStep < 0) return;
+
+        tutorialStepT += dt;
+        bool advance = false;
+
+        switch (tutorialStep)
+        {
+            case 0:   // waiting for any steering at all
+                advance = Mathf.Abs(car.SteerInput) > 0.25f && tutorialStepT > 0.6f;
+                break;
+            case 1:   // waiting for a real drift
+                advance = car.IsDrifting && tutorialStepT > 0.4f;
+                break;
+            case 2:   // the well done, on a timer
+                advance = tutorialStepT > 1.8f;
+                break;
+            default:  // the last line, then out of the way
+                advance = tutorialStepT > 4f;
+                break;
+        }
+
+        // Never nag: if a step goes unanswered for long enough, move on. The
+        // player is clearly driving, which was the point.
+        if (!advance && tutorialStep < 2 && tutorialStepT > 14f) advance = true;
+
+        int shown = Mathf.Min(tutorialStep, TutorialPrompts.Length - 1);
+        tutorialHint.text = TutorialPrompts[shown];
+
+        // fades up, holds, and fades out as the step ends
+        float a = Mathf.Clamp01(tutorialStepT / 0.35f);
+        tutorialHint.color = new Color(1f, 1f, 1f, a * (0.75f + 0.25f * Mathf.Sin(tutorialStepT * 3f)));
+
+        if (!advance) return;
+
+        tutorialStep++;
+        tutorialStepT = 0f;
+        if (tutorialStep >= TutorialPrompts.Length)
+        {
+            tutorialStep = -1;
+            tutorialRun = false;
+            tutorialHint.color = new Color(1f, 1f, 1f, 0f);
+        }
+        else
+        {
+            audioMan.PlayPop();
+        }
+    }
+
+    /// <summary>Takes the coaching off the screen when the drive ends.</summary>
+    void EndTutorialHints()
+    {
+        tutorialRun = false;
+        tutorialStep = -1;
+        if (tutorialHint != null) tutorialHint.color = new Color(1f, 1f, 1f, 0f);
     }
 
     // ------------------------------------------------------- the death screen

@@ -92,6 +92,9 @@ public class CarController : MonoBehaviour
     [Range(0.3f, 1f)] public float driftHoldFraction = 0.66f;
     [Tooltip("How firmly the held angle is locked in.")]
     public float driftHoldGrab = 3.2f;
+    [Tooltip("How quickly the slide settles to the angle the thumb is asking " +
+             "for. Low is loose and gradual, high is direct and twitchy.")]
+    public float angleSeek = 1.8f;
     float smoothedSteer;
     [Tooltip("Strength of outward push in corners. The core difficulty knob.")]
     public float centrifugalFactor = 0.85f;
@@ -133,6 +136,63 @@ public class CarController : MonoBehaviour
     public bool IsDrifting { get; private set; }
     /// <summary>True as soon as the car steps out - before it scores as a drift.</summary>
     public bool IsSliding { get; private set; }
+    /// <summary>Eased thumb input, -1 to 1. Read by the tutorial coaching.</summary>
+    public float SteerInput { get { return smoothedSteer; } }
+
+    /// <summary>
+    /// Whether the tyres should be smoking, marking and squealing. A car
+    /// coasting wide with nobody steering it is not drifting. An oil spin is
+    /// the exception - that is worth seeing however it happened.
+    /// </summary>
+    public bool EffectsActive
+    {
+        get { return IsSpinning || (steerAssist > 0.35f && (IsSliding || IsDrifting)); }
+    }
+
+    // --- steering assist
+    // Two things quietly steer the car round a corner when nobody is driving:
+    // an outward push set slightly below what holding a straight line needs,
+    // and grip bleeding the sideways speed back to zero. Both fade out when
+    // the screen is not being touched, and fade back in just as smoothly so
+    // regripping is never a jolt.
+    const float AssistFadeOut = 0.7f;   // seconds to let go of the car
+    const float AssistFadeIn = 0.5f;    // and to take it back
+    // Repositioning a thumb mid-drift lifts it for a moment, and every one of
+    // those used to nudge the grip and the car's pose. Well over the length of
+    // any regrip, so a drift you are actively steering is never touched.
+    const float AssistGrace = 0.35f;
+    const float ResyncRate = 45f;       // deg/sec the held heading winds back
+
+    float steerAssistRaw = 1f;
+    float noTouchTime;
+    float poseFade = 1f;            // 1 = posed by the drift, 0 = squared up
+    float prevLateral;              // last frame's sideways speed, for rate limiting
+    float headingOffset;                // degrees held off the road's heading
+    float shownHeadingOffset;           // the smoothed version actually applied
+    float lastRoadYaw;
+    bool roadYawValid;
+
+    /// <summary>
+    /// Eased, so the assist arrives and leaves without a kink in the middle -
+    /// a linear ramp changes the forces on the car abruptly at both ends, and
+    /// that reads as a twitch.
+    /// </summary>
+    float Assist { get { return Mathf.SmoothStep(0f, 1f, steerAssistRaw); } }
+    float steerAssist { get { return Assist; } }
+
+    /// <summary>1 while the player is steering, 0 once they have let go.</summary>
+    public float SteerAssist { get { return steerAssist; } }
+
+    /// <summary>Is a finger (or the mouse button) actually down right now?</summary>
+    static bool TouchHeld()
+    {
+        if (Input.touchCount > 0)
+        {
+            TouchPhase phase = Input.GetTouch(0).phase;
+            return phase != TouchPhase.Ended && phase != TouchPhase.Canceled;
+        }
+        return Input.GetMouseButton(0);
+    }
     public bool IsSpinning { get { return spinTimer > 0f; } }
     public float DriftTime { get; private set; }
 
@@ -391,6 +451,13 @@ public class CarController : MonoBehaviour
         LateralOffset = 0f;
         LateralVelocity = 0f;
         smoothedSteer = 0f;
+        steerAssistRaw = 1f;
+        poseFade = 1f;
+        prevLateral = 0f;
+        noTouchTime = 0f;
+        headingOffset = 0f;
+        shownHeadingOffset = 0f;
+        roadYawValid = false;        // pick up the new road's heading
         IsDrifting = false;
         IsSliding = false;
         anchorActive = false;
@@ -509,33 +576,105 @@ public class CarController : MonoBehaviour
         currentCurvDegPerM = curvDegPerM;
         float curvRadPerM = curvDegPerM * Mathf.Deg2Rad;
 
+        // A lift of a fraction of a second is a regrip, not a decision to stop
+        // driving, and it must not change how the car handles.
+        bool touching = steeringLocked || spinTimer > 0f || TouchHeld();
+        noTouchTime = touching ? 0f : noTouchTime + dt;
+        bool driving = touching || noTouchTime < AssistGrace;
+
+        steerAssistRaw = Mathf.MoveTowards(steerAssistRaw, driving ? 1f : 0f,
+            dt / (driving ? AssistFadeIn : AssistFadeOut));
+
+        // The pose has its own, quicker fade. Tying it to the assist curve
+        // stretched the squaring-up across the whole fade, so the car looked
+        // like it kept slowly rotating the entire time it was coasting.
+        poseFade = Mathf.MoveTowards(poseFade, driving ? 1f : 0f, dt / 0.3f);
+
+        prevLateral = LateralVelocity;
+
         // positive curvature = right turn = outward push to the LEFT (negative lateral)
-        float centrifugal = -curvRadPerM * CurrentSpeed * CurrentSpeed * centrifugalFactor;
+        // A factor under 1 is less outward push than holding a straight line
+        // needs, and that shortfall is the car steering itself. With nobody
+        // driving it goes to the full 1 and the bend stops carrying the car.
+        float centrifugal = -curvRadPerM * CurrentSpeed * CurrentSpeed
+                            * Mathf.Lerp(1f, centrifugalFactor, steerAssist);
 
         // Steering into a slide that is already going the other way is a
         // counter-steer: give it extra bite, because catching and holding the
         // angle is the skill the whole game is built on.
+        //
+        // The bite RAMPS with how far the car has actually stepped out. As a
+        // flat on/off it switched the full boost in the instant the thumb
+        // crossed the middle, so flicking left-right at speed changed the
+        // steering force by 60% between one frame and the next - which is the
+        // jump. A car that is barely sideways has nothing to catch.
         bool countering = steer * LateralVelocity < 0f;
-        float authority = steerAcceleration * (countering ? counterSteerBoost : 1f);
+        float outAlready = Mathf.Clamp01(Mathf.Abs(LateralVelocity)
+                                         / Mathf.Max(0.01f, maxLateralSpeed * 0.45f));
+        float boost = countering ? Mathf.Lerp(1f, counterSteerBoost, outAlready) : 1f;
+        float authority = steerAcceleration * boost;
         LateralVelocity += (steer * authority + centrifugal) * dt;
 
         // Grip bleeds sideways speed away proportionally, so a slide tails off
         // instead of stopping dead. Hands off, it settles quickly; while you
         // hold a steer it barely bleeds at all, so the drift keeps going.
-        float decay = spinTimer > 0f ? 0.6f
-                    : Mathf.Abs(steer) > 0.05f ? gripDecaySteering
-                    : gripDecayFree;
+        // Grip used to SWITCH between its two values the instant the thumb
+        // passed 5% of lock. Flicking from left to right takes the input
+        // through zero, so the damping jumped four-fold and back within a
+        // frame or two - and at speed the sideways speed being damped is
+        // large, so that lands as a real jolt. Blended, it is continuous.
+        float steerGrip = Mathf.Lerp(gripDecayFree, gripDecaySteering,
+                                     Mathf.Clamp01(Mathf.Abs(steer) / 0.3f));
+        float decay = spinTimer > 0f ? 0.6f : steerGrip;
+        // the other half of it: grip pulling the slide back to zero is what
+        // walks the car around the corner on its own
+        decay *= steerAssist;
         LateralVelocity *= Mathf.Exp(-decay * dt);
 
-        // The sweet spot: counter-steering out of a decent slide parks the car
-        // at a held angle rather than letting it wash out or spin further.
+        // The old rail parked the car at a FIXED fraction of full lock the
+        // moment you counter-steered, whatever the thumb was asking for. Taking
+        // it out gave the angle back but left nothing steadying the car, so it
+        // wandered and you spent the corner fighting it - which is the chop.
+        //
+        // This steadies it toward the angle the THUMB is asking for instead:
+        // where your finger sits is the slide you get, and the car eases there
+        // rather than being yanked. Full control, and smooth, because the
+        // target only moves when your thumb does.
+        if (angleSeek > 0.01f && spinTimer <= 0f && steerAssist > 0.35f)
+        {
+            float commanded = steer * maxLateralSpeed;
+            LateralVelocity = Mathf.Lerp(LateralVelocity, commanded,
+                1f - Mathf.Exp(-angleSeek * dt));
+        }
+
         float slideFrac = Mathf.Abs(LateralVelocity) / maxLateralSpeed;
-        if (countering && slideFrac > 0.40f && spinTimer <= 0f)
+        if (driftHoldGrab > 0.01f && countering && slideFrac > 0.40f && spinTimer <= 0f)
         {
             float hold = Mathf.Sign(LateralVelocity) * maxLateralSpeed * driftHoldFraction;
             LateralVelocity = Mathf.Lerp(LateralVelocity, hold,
                 1f - Mathf.Exp(-driftHoldGrab * dt));
         }
+        // Taking the car back is the moment everything lands at once: grip
+        // returns, the thumb asks for an angle, and whatever sideways speed
+        // built up while coasting is still there. All three together threw the
+        // car into a drift far faster than the player asked for. While the
+        // assist is still coming back, the sideways speed may only change so
+        // fast - so a thumb landing and immediately demanding a drift gets a
+        // quick turn in, not a flick.
+        if (steerAssist < 0.97f)
+        {
+            LateralVelocity = Mathf.MoveTowards(prevLateral, LateralVelocity,
+                                                maxLateralSpeed * 1.1f * dt);
+        }
+
+        // A ceiling on how fast the slide can change at all. Nothing in normal
+        // driving comes near it, but the outward push grows with the SQUARE of
+        // speed, so at the top end a flick through the middle could swing the
+        // car far harder than the same flick does at 55mph. This keeps the
+        // response consistent from one end of a run to the other.
+        LateralVelocity = Mathf.MoveTowards(prevLateral, LateralVelocity,
+                                            maxLateralSpeed * 3.2f * dt);
+
         LateralVelocity = Mathf.Clamp(LateralVelocity, -maxLateralSpeed, maxLateralSpeed);
 
         LateralOffset += LateralVelocity * dt;
@@ -549,12 +688,16 @@ public class CarController : MonoBehaviour
         // Purely a question of how far the car has stepped out - being carried
         // wide through a corner counts as a drift too, which is what makes the
         // combo build naturally on a fast line.
-        IsDrifting = Mathf.Abs(LateralVelocity) > driftThreshold;
+        // A car nobody is steering, running wide through a bend on its own
+        // momentum, is not drifting - it is crashing slowly. No combo for it.
+        bool beingDriven = steerAssist > 0.35f;
+        IsDrifting = beingDriven && Mathf.Abs(LateralVelocity) > driftThreshold;
         // Smoke, skid marks and the drift sound come on with the INPUT, not
         // with the slide - touch the screen and the car is already laying
         // rubber, long before it has stepped out far enough to score.
-        IsSliding = Mathf.Abs(smoothedSteer) > 0.015f ||
-                    Mathf.Abs(LateralVelocity) > driftThreshold * effectsEarlyFactor;
+        IsSliding = beingDriven &&
+                    (Mathf.Abs(smoothedSteer) > 0.015f ||
+                     Mathf.Abs(LateralVelocity) > driftThreshold * effectsEarlyFactor);
 
         // sustained drift timer, with a short grace window so a quick
         // straighten-up between corners doesn't reset the multiplier
@@ -579,13 +722,17 @@ public class CarController : MonoBehaviour
         // added on top so they visibly answer the steering.
         if (wheelSpin != null && !hoverMode)
         {
-            // Through an oil spin the body angle is driven by the spin, not by
-            // the drift, so the value below stops changing and the wheels sit
-            // locked at whatever angle they were on. Ease them straight
-            // instead - a spinning car has no steering input anyway.
+            // THE STUCK WHEEL. An oil spin sweeps the body angle through a
+            // full 360, and Mathf.LerpAngle leaves the running value
+            // unwrapped - so it can settle at 350 rather than -10. The car
+            // looks straight, because a rotation does not care, but this line
+            // clamps to 45 degrees and -350 clamps to full lock. The wheels
+            // then sat at maximum steering for the rest of the run.
+            // DeltaAngle folds it back into -180..180 before the clamp.
+            float bodyYaw = Mathf.DeltaAngle(0f, smoothedDriftYaw);
             float target = spinTimer > 0f
                 ? 0f
-                : Mathf.Clamp(-smoothedDriftYaw + steer * frontWheelSteerAngle * 0.35f,
+                : Mathf.Clamp(-bodyYaw + steer * frontWheelSteerAngle * 0.35f,
                               -45f, 45f);
             wheelSpin.steerAngle = spinTimer > 0f
                 ? Mathf.MoveTowards(wheelSpin.steerAngle, target, 180f * dt)
@@ -624,7 +771,44 @@ public class CarController : MonoBehaviour
         Vector3 right = Vector3.Cross(Vector3.up, fwd).normalized;
 
         transform.position = pos + right * LateralOffset;
-        transform.rotation = Quaternion.LookRotation(fwd, Vector3.up);
+
+        // THE ROTATION IS THE REST OF THE SELF-STEER. The rig points down the
+        // road, so simply travelling along a bend yaws the car - and the
+        // camera with it - even when nothing is steering.
+        //
+        // Tracked as an OFFSET from the road's heading rather than as a frozen
+        // rotation. Slerping a held rotation toward the road's was chasing a
+        // target that was itself moving, which is what made the car look like
+        // it kept trying to turn and catching itself. The offset simply grows
+        // by whatever the road turns while nobody is driving, then unwinds at
+        // a fixed, gentle rate once somebody is.
+        Quaternion roadRot = Quaternion.LookRotation(fwd, Vector3.up);
+        float roadYaw = roadRot.eulerAngles.y;
+        float assist = Assist;
+
+        if (roadYawValid && !idleMode)
+        {
+            float roadTurned = Mathf.DeltaAngle(lastRoadYaw, roadYaw);
+            headingOffset -= roadTurned * (1f - assist);
+        }
+        lastRoadYaw = roadYaw;
+        roadYawValid = true;
+
+        // back in line once the player is driving again - never faster than
+        // this, so retaking the car is a lean rather than a snap
+        headingOffset = Mathf.MoveTowards(headingOffset, 0f, ResyncRate * assist * dt);
+        headingOffset = Mathf.Clamp(headingOffset, -70f, 70f);
+
+        // The road's heading comes from samples a metre apart, so at speed the
+        // per-frame change arrives in lumps - a couple of frames of nothing,
+        // then a step. Feeding that straight into the car's rotation is what
+        // made the steering feel chopped up. The applied angle trails the
+        // target through a low-pass, which costs nothing and smooths it out.
+        shownHeadingOffset = dt > 0f
+            ? Mathf.Lerp(shownHeadingOffset, headingOffset, 1f - Mathf.Exp(-14f * dt))
+            : headingOffset;
+
+        transform.rotation = roadRot * Quaternion.Euler(0f, shownHeadingOffset, 0f);
 
         if (carVisual == null) return;
 
@@ -634,6 +818,14 @@ public class CarController : MonoBehaviour
         float driftPercent = idleMode
             ? Mathf.Clamp(idleYawPercent, -1f, 1f)
             : Mathf.Clamp(slideTerm + cornerTerm, -1f, 1f);
+
+        // Nobody driving: the body squares back up rather than hanging at a
+        // drift angle with no one holding it there. The car keeps running wide
+        // - only the pose changes - so you watch its back as it drives off the
+        // outside of the bend.
+        // one clean, quick straighten when the player lets go - then nothing
+        if (spinTimer <= 0f && !idleMode) driftPercent *= poseFade;
+
         float visualYaw = driftPercent * driftAngle;
 
         // full 360 while sliding on oil
@@ -688,6 +880,11 @@ public class CarController : MonoBehaviour
         smoothedDriftYaw = dt > 0f
             ? Mathf.LerpAngle(smoothedDriftYaw, visualYaw, Mathf.Clamp01(driftRotationSpeed * dt))
             : visualYaw;
+        // Folded back into -180..180 once the spin is over. LerpAngle takes
+        // the short way round but does not wrap its result, so without this
+        // the value wanders further from zero with every spin and anything
+        // reading it as a steering angle goes with it.
+        if (spinTimer <= 0f) smoothedDriftYaw = Mathf.DeltaAngle(0f, smoothedDriftYaw);
         smoothedBank = dt > 0f
             ? Mathf.Lerp(smoothedBank, bank, Mathf.Clamp01(driftRotationSpeed * dt))
             : bank;
@@ -726,7 +923,7 @@ public class CarController : MonoBehaviour
         trailR.transform.position = ground + wheelRot * new Vector3(rearWheelHalfWidth, 0f, -rearWheelBack);
 
         // effects kick in at a lower slide than the scoring drift does
-        bool emit = IsSliding || IsDrifting || IsSpinning;
+        bool emit = EffectsActive;
         // hover cars leave no tire marks (the smoke stays - reads as hover dust)
         trailL.emitting = emit && !hoverMode;
         trailR.emitting = emit && !hoverMode;
@@ -1425,7 +1622,10 @@ public class CarController : MonoBehaviour
         spinTimer = spinDuration;
         spinDir = Random.value < 0.5f ? -1f : 1f;
         LateralVelocity = Mathf.Clamp(LateralVelocity + spinDir * 6f, -maxLateralSpeed, maxLateralSpeed);
-        CurrentSpeed = Mathf.Max(baseSpeed, CurrentSpeed * spinSpeedPenalty);
+        // Floored below the starting speed, not at it. Flooring at baseSpeed
+        // meant oil cost nothing early in a run - and could even hand speed
+        // back - because the car has barely climbed above it by then.
+        CurrentSpeed = Mathf.Max(baseSpeed * 0.8f, CurrentSpeed * spinSpeedPenalty);
     }
 
     // ------------------------------------------------------------------ input

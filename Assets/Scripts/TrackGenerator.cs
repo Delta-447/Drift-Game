@@ -29,7 +29,7 @@ public class TrackGenerator : MonoBehaviour
     // about two hundred entries.
     struct TrailPoint { public Vector3 pos; public float dist; }
     readonly List<TrailPoint> trail = new List<TrailPoint>();
-    const float TrailSpacing = 8f;
+    const float TrailSpacing = 5f;
     const float TrailMemory = 1600f;
     float nextTrailAt;
 
@@ -125,7 +125,17 @@ public class TrackGenerator : MonoBehaviour
         for (int i = 0; i < trail.Count; i++)
         {
             TrailPoint tp = trail[i];
-            if (atDistance - tp.dist < 220f) break;       // the list is in order
+            // Ignore only the road immediately behind. This window used to be
+            // 220m, which is longer than a whole loop at the corner radii the
+            // track now uses - a 24m corner closes a full circle in 150m, so
+            // every tight loop was invisible to this check. 55m is the most
+            // that can be skipped safely: on the tightest legal corner, two
+            // points that far apart along the road are already further apart
+            // than the clearance being tested.
+            // Scaled to the road: a race road is 16m wide against the endless
+            // 11, so its corners are wider in world terms and its blind spot
+            // has to be shorter or a loop closes inside it.
+            if (atDistance - tp.dist < Mathf.Max(34f, roadWidth * 3f)) break;
             if (Mathf.Abs(tp.pos.y - p.y) > 14f) continue; // a different level
             Vector3 d = tp.pos - p;
             d.y = 0f;
@@ -386,6 +396,9 @@ public class TrackGenerator : MonoBehaviour
     {
         public float endDistance;
         public GameObject go;
+        /// <summary>What it covers, for deciding whether new road runs through it.</summary>
+        public Bounds bounds;
+        public bool hasBounds;
     }
 
     class CoinData
@@ -711,6 +724,8 @@ public class TrackGenerator : MonoBehaviour
     void StartNewSegment()
     {
         float t = Mathf.Clamp01(frontDistance / difficultyRampMeters);
+        // the pass spirals on purpose, and is exempt from every crossing check
+        bool mountain = snowBlend > 0.5f;
 
         // straight either because the backdrop asked for it, or because a run
         // just started and the opening stretch should be clean
@@ -719,6 +734,18 @@ public class TrackGenerator : MonoBehaviour
             segmentCurvature = 0f;
             segmentRemaining = 60f;
             lastWasCorner = false;
+
+            // A requested straight used to be laid blind. That is exactly what
+            // a revive asks for - a clean run-in - and 60 metres of road with
+            // no crossing check can drive straight into a loop the track made
+            // earlier, which is why it turned up right after a respawn. A
+            // gentle bend is a small price for not intersecting.
+            if (!mountain && !forceStraight && ArcWouldCross(0f, segmentRemaining + 40f))
+            {
+                float away = Mathf.Rad2Deg / 55f;
+                if (!ArcWouldCross(-away, 70f)) segmentCurvature = -away;
+                else if (!ArcWouldCross(away, 70f)) segmentCurvature = away;
+            }
             return;
         }
 
@@ -728,6 +755,29 @@ public class TrackGenerator : MonoBehaviour
             // short breather between corners rather than a straight
             segmentRemaining = Mathf.Lerp(22f, 9f, t) * Random.Range(0.6f, 1.4f) * straightBias;
             lastWasCorner = false;
+
+            // Straights were never checked - only corners were - so the road
+            // could run head-on into a loop it laid earlier and nothing
+            // objected. If this one would, peel away instead: try each
+            // direction at a gentle radius and take whichever is clear.
+            if (!mountain && ArcWouldCross(0f, segmentRemaining + 40f))
+            {
+                float away = Mathf.Rad2Deg / 40f;
+                if (!ArcWouldCross(-away, 60f))
+                {
+                    segmentCurvature = -away;
+                    segmentRemaining = 60f;
+                    lastWasCorner = true;
+                    lastCornerDir = -1;
+                }
+                else if (!ArcWouldCross(away, 60f))
+                {
+                    segmentCurvature = away;
+                    segmentRemaining = 60f;
+                    lastWasCorner = true;
+                    lastCornerDir = 1;
+                }
+            }
         }
         else
         {
@@ -744,7 +794,6 @@ public class TrackGenerator : MonoBehaviour
             // On the mountain the road is a pass winding COUNTERCLOCKWISE up
             // and around it, so nearly every corner turns left. The mountain
             // stays on the inside of the turn and the drop on the outside.
-            bool mountain = snowBlend > 0.5f;
             if (mountain && Random.value < 0.85f) dir = MountainTurnDir;
 
             // Wide sweeps up there. A tight helix wraps back over itself
@@ -755,8 +804,13 @@ public class TrackGenerator : MonoBehaviour
                 : Mathf.Lerp(42f, 24f, t) * Random.Range(0.8f, 1.25f) / curveTightness;
             // corners that are worth drifting: they come round far enough that
             // the car has to be sideways through them, not just aimed
-            float angle = Random.Range(Mathf.Lerp(45f, 60f, t), Mathf.Lerp(85f, 125f, t))
-                          * (mountain ? 1f : curveTightness);
+            // Capped. With the race multiplier on top, a single corner could
+            // ask for over 160 degrees - most of a hairpin - and two of those
+            // the same way round close a loop before the crossing check's
+            // blind spot has even been cleared.
+            float angle = Mathf.Min(130f,
+                Random.Range(Mathf.Lerp(45f, 60f, t), Mathf.Lerp(85f, 125f, t))
+                * (mountain ? 1f : curveTightness));
 
             segmentCurvature = dir * Mathf.Rad2Deg / radius;
             segmentRemaining = angle / Mathf.Abs(segmentCurvature);
@@ -1792,7 +1846,7 @@ public class TrackGenerator : MonoBehaviour
             float offset = half + Random.Range(6f, 26f);
             Vector3 spot = pos + right * (offset * side)
                            + Quaternion.Euler(0f, Random.Range(0f, 360f), 0f) * Vector3.forward * Random.Range(0f, 3f);
-            if (!AreaClearOfRoad(spot, half + 4f)) continue;
+            if (!ClearOfAllRoad(spot, half + 6f)) continue;
 
             SpawnBuilding(dist, spot, fwd);
         }
@@ -2466,7 +2520,11 @@ public class TrackGenerator : MonoBehaviour
                             * Random.Range(0f, 2.5f);
         Vector3 spot = pos + right * (offset * side) + fwdJitter;
 
-        if (!AreaClearOfRoad(spot, roadWidth * 0.5f + 2f)) return;
+        // The exact test, not the sampled one: it sees road the sample window
+        // has already dropped, and it does not step over points. The margin
+        // covers the canopy as well as the trunk - a tree planted right on the
+        // edge still hangs over the tarmac.
+        if (!ClearOfAllRoad(spot, roadWidth * 0.5f + 5f)) return;
 
         // plenty of undergrowth mixed in with the trees, not just trunks
         bool bush = Random.value < 0.32f;
@@ -3206,15 +3264,52 @@ public class TrackGenerator : MonoBehaviour
     {
         if (go == null) return;
         var c = new Chunk { endDistance = endDistance, go = go };
+
+        // A grass patch is ONE object whose transform sits at the track's
+        // origin while its mesh covers a hundred metres of verge. Filed by its
+        // transform, every patch in the game landed in the same cell at the
+        // origin and no road ever found one - which is why grass on the road
+        // outlived every other fix. Filed by what it actually covers, it does.
+        var rends = go.GetComponentsInChildren<Renderer>();
+        if (rends.Length > 0)
+        {
+            Bounds b = rends[0].bounds;
+            for (int i = 1; i < rends.Length; i++) b.Encapsulate(rends[i].bounds);
+            c.bounds = b;
+        }
+        else
+        {
+            c.bounds = new Bounds(go.transform.position, Vector3.one);
+        }
+        c.hasBounds = true;
         decorations.Add(c);
 
-        long k = CellKey(go.transform.position);
-        if (!decoGrid.TryGetValue(k, out List<Chunk> list))
+        int cx0 = Mathf.FloorToInt(c.bounds.min.x / DecoCell);
+        int cx1 = Mathf.FloorToInt(c.bounds.max.x / DecoCell);
+        int cz0 = Mathf.FloorToInt(c.bounds.min.z / DecoCell);
+        int cz1 = Mathf.FloorToInt(c.bounds.max.z / DecoCell);
+
+        // a runaway bounds (an empty mesh, a stray vertex) must not fill the
+        // grid with thousands of entries
+        if ((long)(cx1 - cx0 + 1) * (cz1 - cz0 + 1) > 400)
         {
-            list = new List<Chunk>();
-            decoGrid[k] = list;
+            cx0 = cx1 = Mathf.FloorToInt(c.bounds.center.x / DecoCell);
+            cz0 = cz1 = Mathf.FloorToInt(c.bounds.center.z / DecoCell);
         }
-        list.Add(c);
+
+        for (int cx = cx0; cx <= cx1; cx++)
+        {
+            for (int cz = cz0; cz <= cz1; cz++)
+            {
+                long k = (((long)cx) << 32) ^ (((long)cz) & 0xffffffffL);
+                if (!decoGrid.TryGetValue(k, out List<Chunk> list))
+                {
+                    list = new List<Chunk>();
+                    decoGrid[k] = list;
+                }
+                list.Add(c);
+            }
+        }
     }
 
     /// <summary>
@@ -3226,7 +3321,9 @@ public class TrackGenerator : MonoBehaviour
     /// </summary>
     void ClearDecorationsAt(Vector3 roadPos)
     {
-        float clear = roadWidth * 0.5f + 3f;
+        // wider than the tarmac: a trunk on the very edge still puts branches
+        // over the road, which reads as "in the way" just as much
+        float clear = roadWidth * 0.5f + 6f;
         float sq = clear * clear;
 
         for (int dx = -1; dx <= 1; dx++)
@@ -3241,10 +3338,25 @@ public class TrackGenerator : MonoBehaviour
                     Chunk c = list[i];
                     if (c.go == null) { list.RemoveAt(i); continue; }
 
-                    Vector3 d = c.go.transform.position - roadPos;
-                    if (Mathf.Abs(d.y) > 9f) continue;   // a loop above or below
-                    d.y = 0f;
-                    if (d.sqrMagnitude > sq) continue;
+                    // Measured against what the object COVERS - but only for
+                    // the sprawling ones. A tree's bounds include its canopy,
+                    // so testing those deleted any tree whose branches reached
+                    // within clearance of a new stretch of road, which ate the
+                    // roadside as the track was laid and read as trees
+                    // despawning. A trunk is judged by where the trunk is.
+                    if (c.hasBounds && c.bounds.size.magnitude > 30f)
+                    {
+                        if (Mathf.Abs(c.bounds.center.y - roadPos.y) > 9f + c.bounds.extents.y) continue;
+                        Vector3 flat = new Vector3(roadPos.x, c.bounds.center.y, roadPos.z);
+                        if (c.bounds.SqrDistance(flat) > sq) continue;
+                    }
+                    else
+                    {
+                        Vector3 d = c.go.transform.position - roadPos;
+                        if (Mathf.Abs(d.y) > 9f) continue;   // a loop above or below
+                        d.y = 0f;
+                        if (d.sqrMagnitude > sq) continue;
+                    }
 
                     Object.Destroy(c.go);
                     c.go = null;

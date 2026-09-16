@@ -235,8 +235,27 @@ public class CameraFollow : MonoBehaviour
         if (toAhead.sqrMagnitude < 0.01f) return target.forward;
         Vector3 fwd = target.forward;
         fwd.y = 0f;
-        return Vector3.Slerp(fwd.normalized, toAhead.normalized, positionAnticipation);
+        // Anticipation is the camera swinging toward the corner BEFORE the car
+        // gets there. That belongs to a car that is going round the corner -
+        // with nobody steering it is not, so the camera just sits behind it.
+        return Vector3.Slerp(fwd.normalized, toAhead.normalized,
+                             positionAnticipation * Assist);
     }
+
+    // The car's assist flips over half a second; the camera takes its own,
+    // slower reading of it. Anticipation changes where the car sits in frame,
+    // and a framing change that arrives quickly reads as the camera moving of
+    // its own accord every time a thumb lands or lifts.
+    float smoothedAssist = 1f;
+
+    /// <summary>Stepped once a frame - it is read by both the position and the aim.</summary>
+    void TickAssist(float dt)
+    {
+        float raw = car != null ? car.SteerAssist : 1f;
+        smoothedAssist = Mathf.Lerp(smoothedAssist, raw, 1f - Mathf.Exp(-1.6f * dt));
+    }
+
+    float Assist { get { return smoothedAssist; } }
 
     Vector3 DesiredPosition()
     {
@@ -245,10 +264,26 @@ public class CameraFollow : MonoBehaviour
 
     Vector3 LookPoint()
     {
-        Vector3 straight = target.position + Vector3.up * lookHeight + target.forward * lookAhead;
+        // flattened: a rig pitched by a slope should not throw the aim point
+        // up or down either
+        Vector3 aimFwd = target.forward;
+        aimFwd.y = 0f;
+        if (aimFwd.sqrMagnitude < 0.001f) aimFwd = target.forward;
+
+        Vector3 straight = target.position + Vector3.up * lookHeight
+                           + aimFwd.normalized * lookAhead;
         if (car == null) return straight;
         Vector3 trackAhead = car.GetTrackPointAhead(cornerLookAhead) + Vector3.up * lookHeight;
-        return Vector3.Lerp(straight, trackAhead, lookAnticipation);
+
+        // Anticipation swings the aim sideways to see through a corner. It
+        // must not move it vertically: the road ahead sits at a different
+        // height on any crest or dip, so blending toward it tilted the camera
+        // up and down - which is what made it look like the camera rose and
+        // fell depending on whether the screen was being touched.
+        trackAhead.y = straight.y;
+
+        // and the aim stays on the car rather than reaching up the road
+        return Vector3.Lerp(straight, trackAhead, lookAnticipation * Assist);
     }
 
     void LateUpdate()
@@ -276,6 +311,8 @@ public class CameraFollow : MonoBehaviour
             ApplyShowcase(dt);
             return;
         }
+
+        TickAssist(dt);
 
         Vector3 desired = DesiredPosition();
         transform.position = Vector3.Lerp(transform.position, desired, 1f - Mathf.Exp(-positionSmoothing * dt));
