@@ -28,6 +28,7 @@ New/rewritten scripts in `Assets/Scripts`:
 
 - The car accelerates forever (`baseSpeed` → `maxSpeed`).
 - Corners throw the car outward (centrifugal force). Holding the line through a corner at speed **is** the drift — the faster you go, the harder you fight the slide.
+- Lift your thumb and nobody is driving: the car runs dead straight on the heading it had, so letting go in a corner puts it off the road.
 - Crash by leaving the road or hitting an obstacle. Tap → instantly back in.
 - Score = meters traveled + drift time bonus + 150 per near-miss.
 
@@ -38,7 +39,9 @@ New/rewritten scripts in `Assets/Scripts`:
 | CarController | `centrifugalFactor` | The core difficulty knob. Higher = corners fight you harder |
 | CarController | `speedGainPerSecond`, `maxSpeed` | How fast runs escalate |
 | CarController | `steerZoneFraction` | Thumb sensitivity (lower = twitchier) |
-| CarController | `grip` | How fast slides settle when you release |
+| CarController | `cornerGrip` | How well the car holds against the corner push while you drive (lower = corners carry you wider) |
+| GameManager | `AngleSeek` | Steering response - how fast the slide reaches where your thumb is |
+| CarController | `releaseRegrip` | How fast a drift straightens out after you let go (the car then runs dead straight) |
 | TrackGenerator | `difficultyRampMeters` | Distance until corners/obstacles reach max difficulty |
 | TrackGenerator | `obstacleSpacingStart/Min` | Obstacle density |
 | TrackGenerator | `roadWidth` | Forgiveness |

@@ -54,8 +54,11 @@ public class GameManager : MonoBehaviour
     /// something below the wheels gets seated too high, and this pulls it back
     /// down. Tune the numbers if a car still sits wrong.
     /// </summary>
-    static readonly string[] HeightFixNames = { "VORTEX HATCH" };
-    static readonly float[] HeightFixValues = { -0.32f };
+    // Empty now. The VORTEX HATCH entry (-0.32) was covering for a part whose
+    // world box reached half a metre below the road; cars are seated on their
+    // measured tyres now, so that correction would sink it.
+    static readonly string[] HeightFixNames = { };
+    static readonly float[] HeightFixValues = { };
 
     static float HeightFixFor(string carName)
     {
@@ -112,12 +115,6 @@ public class GameManager : MonoBehaviour
     const float DriftPointsPerSecond = 11f;
 
     /// <summary>
-    /// How hard the game parks the car at a drift angle when you counter-steer.
-    /// 0 hands the angle entirely to the player; 3.2 was the old assisted feel.
-    /// </summary>
-    const float DriftHoldGrab = 0f;
-
-    /// <summary>
     /// How fast the thumb's position reaches the car. Higher is more direct
     /// and less filtered - the input lag was part of what felt like the car
     /// being guided rather than steered.
@@ -126,26 +123,63 @@ public class GameManager : MonoBehaviour
     /// Back to the value the game shipped with. Sharpening this was meant to
     /// feel more direct and instead just let every small wobble through.
     /// </summary>
-    const float SteerSmoothing = 15f;
+    const float SteerSmoothing = 19f;
 
     /// <summary>
-    /// How firmly the slide settles to the angle the thumb is asking for.
-    /// This is the stabiliser: your finger picks the drift and the car holds
-    /// it there. Too weak and the car wanders and you spend the corner
-    /// correcting it, which is what reads as chop - 1.8 was too weak.
+    /// How quickly the car's slide settles to where the thumb is - the
+    /// stiffness of the spring the slide follows. Half-way in about a quarter
+    /// of a second, and it eases in and out of every change, so a
+    /// left-to-right flick swings through smoothly instead of jolting.
     /// </summary>
-    const float AngleSeek = 3.4f;
+    // 14, up from 10: recorded driving showed the slide trailing the thumb by
+    // about a quarter of a second. Still eases in and out of every change.
+    const float AngleSeek = 14f;
+
+    /// <summary>
+    /// How gentle the steering is around the middle of the thumb's travel
+    /// (see CarController.steerCenterSoftness): small and medium moves slide
+    /// less, while a full slide of the thumb still gives the full drift.
+    /// </summary>
+    // 0.6, up from 0.45: small corrections were still a bit too sensitive.
+    // Only the middle of the travel changes - full lock, the drift angle and
+    // how quickly the car responds are all exactly as they were.
+    const float SteerCenterSoftness = 0.6f;
 
     /// <summary>
     /// How fast the body swings to the angle the physics is asking for. This
     /// is presentation, not handling - lower means the car rolls into and out
-    /// of a drift rather than snapping between poses.
+    /// of a drift rather than snapping between poses. 8.2, up from 6: the
+    /// body was trailing the thumb by nearly half a second, which felt like
+    /// delay. (CarController.bodyLead also has the body start turning with
+    /// the thumb.)
     /// </summary>
-    const float DriftRotationSpeed = 6f;
+    const float DriftRotationSpeed = 8.2f;
+
+    // --- how the car is framed in the lobby
+    /// <summary>0 is dead behind the car, 180 is dead in front of it.</summary>
+    const float LobbyShowcaseAngle = 171f;
+    /// <summary>Metres from the car. Further back shows more of the whole car.</summary>
+    const float LobbyShowcaseRadius = 9.4f;
+    const float LobbyShowcaseHeight = 1.42f;
+
+    /// <summary>
+    /// Logs what the generator is actually being told when a race starts.
+    /// Settled: races were straight because a straight requested near the end
+    /// of an endless run was never cleared when the race track was built (see
+    /// TrackGenerator.Init). Left here, off, in case it is ever needed again.
+    /// </summary>
+    const bool RaceTrackDebug = false;
+
+    /// <summary>
+    /// How far off the road a hover car floats, in metres. (It used to be
+    /// cancelled out by the way the car was seated, so it sat on the road
+    /// whatever this said; it now means what it says.)
+    /// </summary>
+    const float HoverHeight = 0.8f;
 
 
     /// <summary>Shown in the corner of the lobby. Bump it when you ship.</summary>
-    const string GameVersion = "V0.0.3";
+    const string GameVersion = "V1.0.0";
 
 
 
@@ -381,6 +415,8 @@ public class GameManager : MonoBehaviour
         WipeSaveOnce();
         // paint stays off the cars while the feature is locked
         CarPaint.Enabled = !PaintLocked;
+        // ads start loading now so the first one is ready when it is asked for
+        AdManager.Init();
         Application.targetFrameRate = 60;
         Screen.orientation = ScreenOrientation.Portrait; // ignored in editor, applies on device
         best = PlayerPrefs.GetInt("HighScore", 0);
@@ -515,10 +551,21 @@ public class GameManager : MonoBehaviour
 
         // The thumb owns the angle. Both of these are saved on the scene's
         // CarController, so they have to be forced from here to take effect.
-        car.driftHoldGrab = DriftHoldGrab;
         car.steerSmoothing = SteerSmoothing;
         car.angleSeek = AngleSeek;
+        car.steerCenterSoftness = SteerCenterSoftness;
         car.driftRotationSpeed = DriftRotationSpeed;
+        car.hoverHeight = HoverHeight;
+
+        // Lobby framing, forced for the same reason as everything else here:
+        // the CameraFollow in the scene has its own saved values and they win
+        // over the ones written in the code.
+        if (camFollow != null)
+        {
+            camFollow.showcaseAngle = LobbyShowcaseAngle;
+            camFollow.showcaseRadius = LobbyShowcaseRadius;
+            camFollow.showcaseHeight = LobbyShowcaseHeight;
+        }
 
         // Speed and scoring are forced from code (see the constants above);
         // everything about how the car handles is left to the CarController.
@@ -1171,6 +1218,8 @@ public class GameManager : MonoBehaviour
     };
     Text questMultText, questTiresText, pauseQuestText, itemHudText, multHudText;
     Text reviveTireLabel, reviveAdLabel, reviveTimerText, reviveHaveText;
+    /// <summary>An ad was asked for and has not come back yet.</summary>
+    bool reviveAdPending;
 
     [Tooltip("Seconds the player has to decide whether to revive.")]
     public float reviveDecisionTime = 5f;
@@ -1494,6 +1543,7 @@ public class GameManager : MonoBehaviour
         // Tighter bends, held longer, with less road between them.
         track.curveTightness = 1.8f;
         track.straightBias = 0.45f;
+        track.logSegments = RaceTrackDebug;
 
         // The biome goes in with the build request: Init generates the opening
         // stretch immediately, so a race in the city or the snow has to be
@@ -1865,14 +1915,27 @@ public class GameManager : MonoBehaviour
             return;
         }
 
-        // TODO show a real rewarded ad here and only grant on completion
-        PlayerPrefs.SetString("SpinAdDay", System.DateTime.Now.ToString("yyyyMMdd"));
-        SpinsLeft = SpinsLeft + 1;
+        wheelResultText.text = "LOADING AD...";
+        wheelResultText.color = new Color(0.75f, 0.75f, 0.8f);
 
-        wheelResultText.text = "+1 SPIN";
-        wheelResultText.color = new Color(0.55f, 1f, 0.65f);
-        RefreshWheel();
-        audioMan.PlayCoin();
+        AdManager.ShowRewarded("spin", () =>
+        {
+            // only reached when the ad reports a completed view
+            PlayerPrefs.SetString("SpinAdDay", System.DateTime.Now.ToString("yyyyMMdd"));
+            SpinsLeft = SpinsLeft + 1;
+
+            wheelResultText.text = "+1 SPIN";
+            wheelResultText.color = new Color(0.55f, 1f, 0.65f);
+            RefreshWheel();
+            audioMan.PlayCoin();
+        },
+        () =>
+        {
+            // nothing to show, or the ad was closed early - no spin, no charge
+            wheelResultText.text = "NO AD AVAILABLE";
+            wheelResultText.color = new Color(1f, 0.55f, 0.5f);
+            audioMan.PlayTap();
+        });
     }
 
     /// <summary>Buys one extra spin for tires, on top of the daily two.</summary>
@@ -4273,7 +4336,12 @@ public class GameManager : MonoBehaviour
 
         if (swapGhostWheels != null)
         {
-            swapGhostWheels.speed = car.CurrentSpeed
+            // a hover car has nothing touching the road - spinning wheels on
+            // one as it pulls alongside gives the game away
+            int ghostIdx = swapPhase == 1 ? swapToIndex : swapFromIndex;
+            bool ghostHovers = ghostIdx >= 0 && ghostIdx < Cars.Length && Cars[ghostIdx].hover;
+
+            swapGhostWheels.speed = ghostHovers ? 0f : car.CurrentSpeed
                 + (swapPhase == 1 ? SwapClosingSpeed : -SwapDropBackSpeed);
             swapGhostWheels.steerAngle = swapGhostYaw * 1.4f;
         }
@@ -4318,6 +4386,25 @@ public class GameManager : MonoBehaviour
         float length = Mathf.Max(b.size.x, b.size.z, 0.01f);
         m.transform.localScale = m.transform.localScale * (4.2f / length);
 
+        // Seat it on its TYRES, measured the same way as the car you drive.
+        // The old way below - the lowest point of every part's world box -
+        // lifted a few models well clear of the road, because Unity's box for
+        // a turned mesh reaches below the mesh itself: half a metre on the
+        // VORTEX HATCH, forty centimetres on the AUTEN RX. Those were the
+        // rivals floating on the grid.
+        if (WheelSpinner.MeasureContactHeight(m, root.transform, root.transform, out float tyres))
+        {
+            b = rends[0].bounds;
+            for (int i = 1; i < rends.Length; i++) b.Encapsulate(rends[i].bounds);
+            Vector3 mid = root.transform.position - b.center;
+            m.transform.localPosition += new Vector3(mid.x, 0f, mid.z);
+            // centring moved it sideways only, so the tyres are where they were
+            m.transform.localPosition += new Vector3(0f, -tyres, 0f);
+            m.transform.localPosition += new Vector3(0f, HeightFixFor(d.name), 0f);
+            return root;
+        }
+
+        // No wheels found: fall back to the bodywork.
         // measure twice: renderer bounds can lag a scale change by a frame
         for (int pass = 0; pass < 2; pass++)
         {
@@ -4342,6 +4429,16 @@ public class GameManager : MonoBehaviour
         for (int i = 1; i < rends.Length; i++) b.Encapsulate(rends[i].bounds);
         float sunk = root.transform.position.y - 0.06f - b.min.y;
         if (sunk > 0f) m.transform.position += new Vector3(0f, sunk, 0f);
+
+        // And the other way. If the lowest point of the whole car is ABOVE the
+        // ground line then there is no stray geometry to protect against -
+        // the model is simply hovering - so drop it onto the road. This is the
+        // half that was missing, and floating rivals were the result.
+        b = rends[0].bounds;
+        for (int i = 1; i < rends.Length; i++) b.Encapsulate(rends[i].bounds);
+        float hover = b.min.y - root.transform.position.y;
+        if (hover > 0.02f) m.transform.position -= new Vector3(0f, hover, 0f);
+
         return root;
     }
 
@@ -4665,6 +4762,7 @@ public class GameManager : MonoBehaviour
             : "NEED   " + ReviveTireCost;
         reviveTireLabel.color = canTires ? Color.white : new Color(1f, 0.55f, 0.5f);
         reviveHaveText.text = "YOU HAVE " + tires;
+        reviveAdPending = false;
         bool canAd = adRevivesUsed < 5;
         reviveAdLabel.text = canAd
             ? "WATCH AD (" + (5 - adRevivesUsed) + " LEFT)"
@@ -4675,10 +4773,52 @@ public class GameManager : MonoBehaviour
         pauseButton.SetActive(false);
     }
 
+    float resumeCountdown;
+
+    /// <summary>
+    /// The "3, 2, 1" after a revive. The game is already unfrozen as far as
+    /// state goes, but time stays stopped until this finishes - being handed
+    /// back a car at 80mph the instant an ad closes is no way to continue a
+    /// run you have just paid to keep.
+    /// </summary>
+    void TickResumeCountdown()
+    {
+        resumeCountdown -= Time.unscaledDeltaTime;
+
+        int n = Mathf.CeilToInt(resumeCountdown);
+        if (n > 0)
+        {
+            string label = n.ToString();
+            if (countdownText.text != label)
+            {
+                countdownText.text = label;
+                countdownText.color = new Color(1f, 0.8f, 0.2f);
+                audioMan.PlayCountBeep();
+            }
+            // the number swells and settles, same as the start of a run
+            float frac = resumeCountdown - Mathf.Floor(resumeCountdown);
+            float age = 1f - frac;
+            countdownText.transform.localScale =
+                Vector3.one * (1f + 1.6f * Mathf.Exp(-9f * age));
+            countdownText.gameObject.SetActive(true);
+            return;
+        }
+
+        resumeCountdown = 0f;
+        countdownText.gameObject.SetActive(false);
+        countdownText.transform.localScale = Vector3.one;
+        Time.timeScale = 1f;
+        car.steeringLocked = false;
+        audioMan.PlayCountGo();
+        audioMan.StartDriving();
+    }
+
     /// <summary>Counts the offer down on unscaled time - the game is frozen.</summary>
     void TickReviveTimer()
     {
         if (reviveTimer <= 0f) return;
+        // an ad is on screen: the offer must not expire behind it
+        if (reviveAdPending) return;
 
         reviveTimer -= Time.unscaledDeltaTime;
         if (reviveTimer <= 0f)
@@ -4711,11 +4851,27 @@ public class GameManager : MonoBehaviour
     void ReviveWithAd()
     {
         if (adRevivesUsed >= 5) { audioMan.PlayTap(); return; }
-        // TODO integrate a real ad SDK (Unity Ads / AdMob) here - for now the
-        // reward is granted immediately so the flow can be tested
-        adRevivesUsed++;
-        SaveQuests();
-        DoRevive();
+
+        // The revive clock is paused while the ad is up, and the game is
+        // already at timeScale 0 here - the countdown runs on unscaled time,
+        // so it is stopped explicitly rather than ticking away behind the ad.
+        reviveAdPending = true;
+        reviveAdLabel.text = "LOADING AD...";
+
+        AdManager.ShowRewarded("revive", () =>
+        {
+            reviveAdPending = false;
+            adRevivesUsed++;
+            SaveQuests();
+            DoRevive();
+        },
+        () =>
+        {
+            // no ad to show: leave the player on the offer with the tyre
+            // option still open rather than eating their revive
+            reviveAdPending = false;
+            reviveAdLabel.text = "NO AD AVAILABLE";
+        });
     }
 
     void DoRevive()
@@ -4724,11 +4880,30 @@ public class GameManager : MonoBehaviour
         reviveTimerText.transform.localScale = Vector3.one;
         revivesThisRun++;
         revivePanel.SetActive(false);
-        Time.timeScale = 1f;
+        // Time stays stopped until the count-in finishes - see
+        // TickResumeCountdown, which restarts it.
+        Time.timeScale = 0f;
+        resumeCountdown = 3f;
+        car.steeringLocked = true;
         state = State.Playing;
         pauseButton.SetActive(true);
         car.CenterLane();                                  // back to the middle
         track.ClearObstaclesAhead(car.DistanceTraveled, 80f); // clean runway
+
+        // The count-in is for reading the road you are about to drive, not for
+        // watching the wreck you just made. Clear the fireball, put the car
+        // back on its wheels and snap the camera to the normal driving view so
+        // the three seconds are spent looking at what is coming.
+        foreach (var blast in FindObjectsByType<CrashExplosion>(FindObjectsSortMode.None))
+        {
+            Destroy(blast.gameObject);
+        }
+        if (camFollow != null)
+        {
+            camFollow.CancelIntro();
+            camFollow.SetShowcase(false);
+            camFollow.SnapToTarget();
+        }
         // a revive un-burns the car: it is back on the road, not a wreck
         if (car.IsScorched)
         {
@@ -4740,7 +4915,7 @@ public class GameManager : MonoBehaviour
         // in the instant you came back, firing the car straight to its
         // ceiling - and the ceiling never drops again on its own.
         car.ClearBoost();
-        audioMan.StartDriving();   // engine and tyres come back with you
+        // the engine comes back with the count, not before it
         FlashBonus("REVIVED!", new Color(0.4f, 1f, 0.5f));
         audioMan.PlayCoin();
     }
@@ -4891,6 +5066,9 @@ public class GameManager : MonoBehaviour
 
             case State.Playing:
                 if (Input.GetKeyDown(KeyCode.Escape)) { PauseGame(); break; }
+                // coming back from a revive: hold everything until the count
+                // is done, so nobody is dropped straight back into traffic
+                if (resumeCountdown > 0f) { TickResumeCountdown(); break; }
                 TickPlaying();
                 break;
 

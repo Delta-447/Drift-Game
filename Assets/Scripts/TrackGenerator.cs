@@ -513,6 +513,21 @@ public class TrackGenerator : MonoBehaviour
         currentSlope = targetSlope = 0f;
         slopeRemaining = 200f;
         elevation = 0f;
+
+        // THE STRAIGHT RACES. Every "until" here is a distance along the road,
+        // and it belongs to the track that asked for it - but none of them
+        // were ever cleared. Endless asks for a straight at the start of a
+        // run and at every change of scenery, so after a run the last request
+        // was sitting at wherever that run had got to, often kilometres in.
+        // The next track starts again from zero, so it was held straight all
+        // the way out to that point: a whole race of dragstrip. A new track
+        // starts with none of them.
+        straightUntil = -1f;
+        flatUntil = -1f;
+        descendMeters = 0f;
+        passStartDistance = -1f;
+        passEndDistance = -1f;
+
         segmentRemaining = roadBehindStart + firstObstacleAt * 0.8f;
         segmentCurvature = 0f;
         lastWasCorner = false;
@@ -725,11 +740,29 @@ public class TrackGenerator : MonoBehaviour
         }
     }
 
+    [Tooltip("Logs every segment the generator lays, to find out why a track " +
+             "is coming out straight. Editor only, and noisy - leave it off " +
+             "unless you are chasing that.")]
+    public bool logSegments;
+
     void StartNewSegment()
     {
         float t = Mathf.Clamp01(frontDistance / difficultyRampMeters);
-        // the pass spirals on purpose, and is exempt from every crossing check
-        bool mountain = snowBlend > 0.5f;
+        // the pass spirals on purpose, and is exempt from every crossing check.
+        // Only where the road actually climbs, though: a race is a level
+        // circuit, and in the snow it used to get the pass's wide sweeps -
+        // half a dozen gentle bends in a whole race, which reads as straight.
+        // A snow race now corners like any other race.
+        bool mountain = snowBlend > 0.5f && !flatTrack;
+
+        if (logSegments)
+        {
+            Debug.Log(string.Format(
+                "[TRACK] at {0:0}m | tightness {1:0.00} straightBias {2:0.00} " +
+                "| forceStraight {3} straightUntil {4:0} | snow {5:0.00} mountain {6} | width {7:0}",
+                frontDistance, curveTightness, straightBias, forceStraight,
+                straightUntil, snowBlend, mountain, roadWidth));
+        }
 
         // straight either because the backdrop asked for it, or because a run
         // just started and the opening stretch should be clean
@@ -1786,8 +1819,10 @@ public class TrackGenerator : MonoBehaviour
         snowBlend = Mathf.Clamp01(t);
 
         // the profile starts and stops at fixed points on the road, a little
-        // way ahead of whatever has already been built
-        if (snowBlend > 0.15f)
+        // way ahead of whatever has already been built. Not on a level race
+        // circuit: its corners are tight, and a cliff face beside a hairpin
+        // would stand across the other half of the bend.
+        if (snowBlend > 0.15f && !flatTrack)
         {
             if (passStartDistance < 0f)
             {

@@ -318,7 +318,7 @@ public class CameraFollow : MonoBehaviour
         transform.position = Vector3.Lerp(transform.position, desired, 1f - Mathf.Exp(-positionSmoothing * dt));
 
         float roll = car != null
-            ? Mathf.Clamp(car.LateralVelocity / car.maxLateralSpeed, -1f, 1f) * -driftRoll
+            ? Mathf.Clamp(car.SlideVelocity / car.maxLateralSpeed, -1f, 1f) * -driftRoll
             : 0f;
         Quaternion look = Quaternion.LookRotation(LookPoint() - transform.position, Vector3.up)
                           * Quaternion.Euler(0f, 0f, roll);

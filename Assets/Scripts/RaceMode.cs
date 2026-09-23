@@ -225,6 +225,9 @@ public class RaceMode : MonoBehaviour
                 r.skidL = MakeSkid(r.visual, new Vector3(-0.62f, 0.06f, -1.2f));
                 r.skidR = MakeSkid(r.visual, new Vector3(0.62f, 0.06f, -1.2f));
                 r.wheels = WheelSpinner.Attach(visual, root.transform);
+                // find the wheels now, while the car is sitting square on the
+                // grid, rather than on whatever frame it happens to be leaning
+                if (r.wheels != null) r.wheels.Prepare();
             }
             racers.Add(r);
         }

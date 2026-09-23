@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 
 /// <summary>
@@ -5,6 +6,8 @@ using UnityEngine;
 /// the player slides a thumb left/right to control lateral drift.
 /// Corners push the car outward (centrifugal force), so holding a clean
 /// line through a corner at speed IS the drift. GameManager drives Tick().
+/// Lift the thumb and nobody is driving: the car runs dead straight on the
+/// heading it had, so letting go in a corner puts it off the road.
 /// </summary>
 public class CarController : MonoBehaviour
 {
@@ -30,6 +33,13 @@ public class CarController : MonoBehaviour
     public float steerZoneFraction = 0.18f;
     [Tooltip("Thumb drives the REAR of the car: slide right = tail kicks right = car goes left.")]
     public bool thumbControlsRear = true;
+    [Tooltip("How gentle the steering is around the middle of the thumb's " +
+             "travel. 0 = straight line (every bit of thumb is the same " +
+             "amount of slide). Higher = small and medium moves slide less, " +
+             "so holding a drift and making corrections is calmer, while a " +
+             "full slide of the thumb still gives the full drift.")]
+    // (GameManager sets this at startup - change it there.)
+    [Range(0f, 0.9f)] public float steerCenterSoftness = 0.6f;
     [Tooltip("Flips all steering input (settings menu option).")]
     public bool invertSteering = false;
     [Tooltip("Ignores the thumb entirely - used while a countdown is running.")]
@@ -40,11 +50,19 @@ public class CarController : MonoBehaviour
     public float hoverHeight = 0.5f;
     [Tooltip("How hard the hover car banks into drifts.")]
     public float hoverBankAngle = 22f;
-    [Tooltip("Drift intensity above which the rim scrapes and sparks fly.")]
+    [Tooltip("How much of its height the hover car gives up in a full drift. " +
+             "0 = stays at full height, 1 = sinks as low as its lean allows.")]
+    [Range(0f, 1f)] public float hoverDriftDrop = 0.4f;
+    [Tooltip("Smallest gap kept under the hover car's lowest edge, whatever " +
+             "it is doing, in metres.")]
+    public float hoverMinGap = 0.18f;
+    [Tooltip("Drift intensity above which sparks crackle under the hover car.")]
     public float sparkThreshold = 0.35f;
     float appliedVisualY;
     float currentDriftPercent;
     float smoothedDriftYaw;
+    float driftYawRate;         // how fast the body is swinging, deg/s
+    float hoverLift;            // how high the hover car is floating right now
     float smoothedBank;
     float smoothedJumpPitch;
     ParticleSystem sparkL, sparkR;
@@ -76,28 +94,33 @@ public class CarController : MonoBehaviour
     public float boostFadeRate = 11f;
     [Tooltip("How fast queued boosts feed into speed (m/s per second).")]
     public float boostRampRate = 45f;
+    [Header("Handling")]
+    [Tooltip("Fastest the sideways speed can change, in m/s per second. Big " +
+             "thumb swings build over a beat instead of snapping. The " +
+             "sensitivity setting scales this.")]
     public float steerAcceleration = 42f;
+    [Tooltip("Sideways speed at full steering lock.")]
     public float maxLateralSpeed = 17f;
-    [Tooltip("How fast sideways speed decays when not steering.")]
-    public float grip = 26f;
     [Tooltip("How quickly steering input is eased in. Lower = smoother, laggier.")]
     public float steerSmoothing = 15f;
-    [Tooltip("How fast a slide bleeds off with no steering input.")]
-    public float gripDecayFree = 6.5f;
-    [Tooltip("How fast a slide bleeds off while a steer is held. Low = long drifts.")]
-    public float gripDecaySteering = 1.6f;
-    [Tooltip("Extra steering authority when catching a slide.")]
-    public float counterSteerBoost = 1.6f;
-    [Tooltip("Angle a held counter-steer settles at, as a share of maximum.")]
-    [Range(0.3f, 1f)] public float driftHoldFraction = 0.66f;
-    [Tooltip("How firmly the held angle is locked in.")]
-    public float driftHoldGrab = 3.2f;
-    [Tooltip("How quickly the slide settles to the angle the thumb is asking " +
-             "for. Low is loose and gradual, high is direct and twitchy.")]
-    public float angleSeek = 1.8f;
+    [Tooltip("How quickly the slide settles to where the thumb is. Low is " +
+             "loose and gradual, high is direct and twitchy.")]
+    public float angleSeek = 10f;
     float smoothedSteer;
+    float slideTarget;          // where the slide is heading, eased toward the thumb
+    float slideRate;            // how fast the slide is changing, m/s per second
+    // Big swings build at this multiple of steerAcceleration. Above 1 so a
+    // full left-to-right flick still lands in well under a second.
+    const float SwingRateScale = 2.0f;
     [Tooltip("Strength of outward push in corners. The core difficulty knob.")]
     public float centrifugalFactor = 0.85f;
+    [Tooltip("How well the tyres hold against that push while you are driving. " +
+             "Lower = corners carry the car wider and need more counter-steer.")]
+    public float cornerGrip = 10f;
+    [Tooltip("After the screen is let go: how quickly any drift straightens " +
+             "out. From then on the car runs dead straight wherever it is " +
+             "pointing - it never follows the road on its own.")]
+    public float releaseRegrip = 8f;
     [Tooltip("Sideways speed needed before it counts as a drift.")]
     public float driftThreshold = 6.5f;
     [Tooltip("Fraction of that threshold where smoke, skid marks and the " +
@@ -114,6 +137,19 @@ public class CarController : MonoBehaviour
     public float driftBankAngle = 7f;
     [Tooltip("How much the nose points into corners (sells the drift).")]
     public float cornerDriftVisual = 0.45f;
+    [Tooltip("Body angle for a SMALL slide, as a share of the full-size " +
+             "angle. Lower = small corrections barely turn the body, so it " +
+             "only really swings out once you commit to a drift.")]
+    [Range(0.05f, 1f)] public float smallDriftAngleScale = 0.3f;
+    [Tooltip("How much the body turns with your THUMB rather than waiting for " +
+             "the slide to build. 0 = the body only follows the slide (it " +
+             "trails your thumb by nearly half a second); higher = the nose " +
+             "starts turning as you steer and the slide follows, like a real " +
+             "car.")]
+    [Range(0f, 1f)] public float bodyLead = 0.5f;
+    [Tooltip("Size of slide (share of full lock) from which the body angle " +
+             "is at full strength. Below it the angle is eased down.")]
+    [Range(0.05f, 1f)] public float fullDriftAngleFrom = 0.4f;
 
     [Header("Crash")]
     public float carRadius = 1.1f;
@@ -141,58 +177,63 @@ public class CarController : MonoBehaviour
 
     /// <summary>
     /// Whether the tyres should be smoking, marking and squealing. A car
-    /// coasting wide with nobody steering it is not drifting. An oil spin is
-    /// the exception - that is worth seeing however it happened.
+    /// running straight off the road with nobody steering it is not drifting.
+    /// An oil spin is the exception - that is worth seeing however it happened.
     /// </summary>
     public bool EffectsActive
     {
-        get { return IsSpinning || (steerAssist > 0.35f && (IsSliding || IsDrifting)); }
+        get { return IsSpinning || IsSliding || IsDrifting; }
     }
 
-    // --- steering assist
-    // Two things quietly steer the car round a corner when nobody is driving:
-    // an outward push set slightly below what holding a straight line needs,
-    // and grip bleeding the sideways speed back to zero. Both fade out when
-    // the screen is not being touched, and fade back in just as smoothly so
-    // regripping is never a jolt.
-    const float AssistFadeOut = 0.7f;   // seconds to let go of the car
-    const float AssistFadeIn = 0.5f;    // and to take it back
-    // Repositioning a thumb mid-drift lifts it for a moment, and every one of
-    // those used to nudge the grip and the car's pose. Well over the length of
-    // any regrip, so a drift you are actively steering is never touched.
-    const float AssistGrace = 0.35f;
-    const float ResyncRate = 45f;       // deg/sec the held heading winds back
+    // --- hands on / hands off
+    // A finger on the screen is the player driving, and the car goes where the
+    // thumb puts it. Lift the finger and nobody is driving: the car keeps the
+    // heading it had and runs dead straight, so a corner it was in takes it
+    // off the road. There is no grace period and no fade - the handling lets
+    // go the same frame the finger does.
+    bool driving = true;
+    bool coasting;              // nobody driving - running straight
+    float coastWorldYaw;        // the world heading held while coasting
+    float coastSlide;           // leftover drift bleeding away after release
+    float coastTime;            // seconds since the finger lifted
+    float headingOffset;        // rig yaw off the road's heading, degrees
+    float handsOn = 1f;         // eased driving flag - camera and effects only
+    float poseFade = 1f;        // 1 = posed by the drift, 0 = squared up
 
-    float steerAssistRaw = 1f;
-    float noTouchTime;
-    float poseFade = 1f;            // 1 = posed by the drift, 0 = squared up
-    float prevLateral;              // last frame's sideways speed, for rate limiting
-    float coastLateral;             // the part of the slide that IS going straight
-    float headingOffset;                // degrees held off the road's heading
-    float shownHeadingOffset;           // the smoothed version actually applied
-    float lastRoadYaw;
-    bool roadYawValid;
+    // How fast the nose swings back into line with the road once the player
+    // takes the car back. Presentation only: the slide is what moves the car.
+    const float RegainTurnRate = 7f;
+    // How far ahead and behind the road's grade is read - about where the
+    // axles are, so the tyres sit on the slope rather than the car's middle.
+    const float GradeReach = 1.3f;
 
     /// <summary>
-    /// Eased, so the assist arrives and leaves without a kink in the middle -
-    /// a linear ramp changes the forces on the car abruptly at both ends, and
-    /// that reads as a twitch.
+    /// 1 while the player is steering, 0 once they have let go. Eased, and
+    /// only for presentation (camera framing) - the handling itself switches
+    /// the instant the finger lifts.
     /// </summary>
-    float Assist { get { return Mathf.SmoothStep(0f, 1f, steerAssistRaw); } }
-    float steerAssist { get { return Assist; } }
+    public float SteerAssist { get { return Mathf.SmoothStep(0f, 1f, handsOn); } }
 
-    /// <summary>1 while the player is steering, 0 once they have let go.</summary>
-    public float SteerAssist { get { return steerAssist; } }
+    /// <summary>True while a finger (or a steering key) is down.</summary>
+    public bool IsDriving { get { return driving; } }
 
-    /// <summary>Is a finger (or the mouse button) actually down right now?</summary>
-    static bool TouchHeld()
+    /// <summary>
+    /// The part of the sideways motion that is the tyres actually sliding.
+    /// While driving that is all of it. With nobody driving, most sideways
+    /// motion is just the car going straight as the road bends away, and only
+    /// the leftover drift counts.
+    /// </summary>
+    public float SlideVelocity { get { return coasting ? coastSlide : LateralVelocity; } }
+
+    /// <summary>Back to driving along the road, facing down it.</summary>
+    void ClearCoast()
     {
-        if (Input.touchCount > 0)
-        {
-            TouchPhase phase = Input.GetTouch(0).phase;
-            return phase != TouchPhase.Ended && phase != TouchPhase.Canceled;
-        }
-        return Input.GetMouseButton(0);
+        coasting = false;
+        coastSlide = 0f;
+        coastTime = 0f;
+        headingOffset = 0f;
+        slideTarget = LateralVelocity;
+        slideRate = 0f;
     }
     public bool IsSpinning { get { return spinTimer > 0f; } }
     public float DriftTime { get; private set; }
@@ -224,6 +265,8 @@ public class CarController : MonoBehaviour
 
     float touchAnchorX;
     bool anchorActive;
+    int steerFingerId = -1;     // the finger doing the steering
+    bool inputHeld;             // a finger or steering key is down this frame
     float jumpSwipeBaseY = -1f;
 
     /// <summary>
@@ -452,14 +495,12 @@ public class CarController : MonoBehaviour
         LateralOffset = 0f;
         LateralVelocity = 0f;
         smoothedSteer = 0f;
-        steerAssistRaw = 1f;
+        handsOn = 1f;
         poseFade = 1f;
-        prevLateral = 0f;
-        coastLateral = 0f;
-        noTouchTime = 0f;
-        headingOffset = 0f;
-        shownHeadingOffset = 0f;
-        roadYawValid = false;        // pick up the new road's heading
+        driving = true;
+        inputHeld = false;
+        steerFingerId = -1;
+        ClearCoast();
         IsDrifting = false;
         IsSliding = false;
         anchorActive = false;
@@ -470,6 +511,8 @@ public class CarController : MonoBehaviour
         CaptureVisualRotation();
         spinTimer = 0f;
         smoothedDriftYaw = 0f;
+        driftYawRate = 0f;
+        driftSize = 0f;
         smoothedBank = 0f;
         DriftTime = 0f;
         driftGrace = 0f;
@@ -503,6 +546,13 @@ public class CarController : MonoBehaviour
         {
             carVisual.localRotation = startingVisualRotation * BaseVisualRotation();
         }
+
+        // Seat a newly fitted car on its tyres NOW, while the body is square
+        // to the road and the wheels have not turned. Measured later, mid-drift,
+        // the body's lean and the rolled wheels both fed into the answer and
+        // the car could end up sitting in the air. The hover car is seated the
+        // same way - on the ground - and floats up from there in ApplyPose.
+        if (!wheelSeatDone) SeatOnWheels();
     }
 
     Quaternion BaseVisualRotation()
@@ -514,6 +564,7 @@ public class CarController : MonoBehaviour
     public TickResult Tick(float dt)
     {
         tickedThisFrame = true;
+        LastTickFrame = Time.frameCount;
         if (track == null) return TickResult.Ok;
 
         // The menu's showcase drive sets its own body angle. Driving for real
@@ -546,7 +597,21 @@ public class CarController : MonoBehaviour
         }
 
         // --- input (no control while spinning out, or before the lights go)
-        float steer = steeringLocked ? 0f : ReadSteerInput();
+        float steer = 0f;
+        if (steeringLocked)
+        {
+            // On rails through a countdown. Forget the thumb, so steering
+            // picks up from wherever it is when the lights go rather than
+            // jumping to wherever it wandered in the meantime.
+            anchorActive = false;
+            steerFingerId = -1;
+            inputHeld = false;
+        }
+        else
+        {
+            steer = ReadSteerInput();
+            lastRawSteer = steer;
+        }
         if (invertSteering) steer = -steer;
 
         // the thumb is eased in, so the car leans into a slide instead of
@@ -574,153 +639,157 @@ public class CarController : MonoBehaviour
         }
 
         // --- lateral physics
-        track.SamplePose(DistanceTraveled, out _, out _, out float curvDegPerM);
-        currentCurvDegPerM = curvDegPerM;
+        track.SamplePose(DistanceTraveled, out _, out Vector3 roadFwd, out float curvDegPerM);
         float curvRadPerM = curvDegPerM * Mathf.Deg2Rad;
+        // What the car FEELS of the bend - the push and the nose-in pose -
+        // is the road's curvature averaged over a short stretch either side.
+        // The track switches from one bend straight into the next in a single
+        // metre, so read raw, every S-bend kicked the body round by itself
+        // and yanked the slide the other way in the same instant. (The exact
+        // curvature is still used where geometry needs it, below.)
+        currentCurvDegPerM = FeltCurvature(DistanceTraveled);
+        float roadYaw = Mathf.Atan2(roadFwd.x, roadFwd.z) * Mathf.Rad2Deg;
 
-        // A lift of a fraction of a second is a regrip, not a decision to stop
-        // driving, and it must not change how the car handles.
-        bool touching = steeringLocked || spinTimer > 0f || TouchHeld();
-        noTouchTime = touching ? 0f : noTouchTime + dt;
-        bool driving = touching || noTouchTime < AssistGrace;
+        // Somebody is driving while a finger is down. The countdown and an oil
+        // spin count as well - the player has no say in either, so the car is
+        // not left to run off on its own through them.
+        driving = steeringLocked || spinTimer > 0f || inputHeld;
 
-        steerAssistRaw = Mathf.MoveTowards(steerAssistRaw, driving ? 1f : 0f,
-            dt / (driving ? AssistFadeIn : AssistFadeOut));
-
-        // The pose has its own, quicker fade. Tying it to the assist curve
-        // stretched the squaring-up across the whole fade, so the car looked
-        // like it kept slowly rotating the entire time it was coasting.
+        // Camera framing and tyre smoke follow along, eased so a quick regrip
+        // does not flicker them. The handling does not wait for this.
+        handsOn = Mathf.MoveTowards(handsOn, driving ? 1f : 0f,
+                                    dt / (driving ? 0.25f : 0.15f));
+        // one clean, quick straighten of the body when the player lets go
         poseFade = Mathf.MoveTowards(poseFade, driving ? 1f : 0f, dt / 0.3f);
 
-        prevLateral = LateralVelocity;
-
         // positive curvature = right turn = outward push to the LEFT (negative lateral)
-        // A factor under 1 is less outward push than holding a straight line
-        // needs, and that shortfall is the car steering itself. With nobody
-        // driving it goes to the full 1 and the bend stops carrying the car.
-        float centrifugal = -curvRadPerM * CurrentSpeed * CurrentSpeed
-                            * Mathf.Lerp(1f, centrifugalFactor, steerAssist);
+        float centrifugal = -currentCurvDegPerM * Mathf.Deg2Rad
+                            * CurrentSpeed * CurrentSpeed * centrifugalFactor;
+        float alongRoad = CurrentSpeed;
 
-        // Steering into a slide that is already going the other way is a
-        // counter-steer: give it extra bite, because catching and holding the
-        // angle is the skill the whole game is built on.
-        //
-        // The bite RAMPS with how far the car has actually stepped out. As a
-        // flat on/off it switched the full boost in the instant the thumb
-        // crossed the middle, so flicking left-right at speed changed the
-        // steering force by 60% between one frame and the next - which is the
-        // jump. A car that is barely sideways has nothing to catch.
-        bool countering = steer * LateralVelocity < 0f;
-        float outAlready = Mathf.Clamp01(Mathf.Abs(LateralVelocity)
-                                         / Mathf.Max(0.01f, maxLateralSpeed * 0.45f));
-        float boost = countering ? Mathf.Lerp(1f, counterSteerBoost, outAlready) : 1f;
-        float authority = steerAcceleration * boost;
-        LateralVelocity += (steer * authority + centrifugal) * dt;
-
-        // Grip bleeds sideways speed away proportionally, so a slide tails off
-        // instead of stopping dead. Hands off, it settles quickly; while you
-        // hold a steer it barely bleeds at all, so the drift keeps going.
-        // Grip used to SWITCH between its two values the instant the thumb
-        // passed 5% of lock. Flicking from left to right takes the input
-        // through zero, so the damping jumped four-fold and back within a
-        // frame or two - and at speed the sideways speed being damped is
-        // large, so that lands as a real jolt. Blended, it is continuous.
-        float steerGrip = Mathf.Lerp(gripDecayFree, gripDecaySteering,
-                                     Mathf.Clamp01(Mathf.Abs(steer) / 0.3f));
-        float decay = spinTimer > 0f ? 0.6f : steerGrip;
-        // The slide splits in two while coasting. One part is the car simply
-        // holding a straight line as the road bends away - that has to stay,
-        // it IS the no-self-steer behaviour. The other is whatever drift the
-        // player had going when they let go, and leaving that in place is what
-        // looked like the car scrubbing sideways through the corner on its
-        // own. Grip is applied to the second part only, so the drift bleeds
-        // away and the straight line does not.
-        if (steerAssist < 0.999f)
+        if (driving)
         {
-            coastLateral += centrifugal * dt;
-            float carried = LateralVelocity - coastLateral;
-            carried *= Mathf.Exp(-gripDecayFree * dt);
-            LateralVelocity = coastLateral + carried;
+            // Taking the car back after letting go: the sideways speed it built
+            // up running wide carries straight over, and the steering below
+            // catches it. The nose swings back into line in ApplyPose.
+            if (coasting)
+            {
+                coasting = false;
+                coastSlide = 0f;
+                // pick the slide up exactly where it is - no jump - and let the
+                // tyres bite straight away rather than carrying on drifting out
+                slideTarget = LateralVelocity;
+                slideRate = 0f;
+            }
+
+            if (spinTimer > 0f)
+            {
+                // Oil: the tyres have nothing. The corner throws the car and
+                // the slide only bleeds away slowly.
+                float before = LateralVelocity;
+                LateralVelocity += centrifugal * dt;
+                LateralVelocity *= Mathf.Exp(-0.6f * dt);
+                slideTarget = LateralVelocity;
+                slideRate = dt > 0f ? (LateralVelocity - before) / dt : 0f;
+            }
+            else
+            {
+                // THE STEERING. Where the thumb sits is the slide you get, and
+                // the car always arrives exactly there, so you are in control:
+                // no grip that suddenly breaks away, nothing parking the car at
+                // an angle you did not choose.
+                //
+                // Corners shift that target outward, harder the faster you go,
+                // and holding the line means steering against it. On rails
+                // through a countdown there is no push, so the car sits on its
+                // line until the lights go.
+                float cornerPush = steeringLocked ? 0f
+                    : centrifugal / Mathf.Max(0.1f, cornerGrip);
+                // Softer in the middle of the thumb's travel, full at the ends.
+                // Recorded driving showed medium moves throwing the car 10-15
+                // m/s sideways - across most of the road - so every
+                // correction overshot and needed correcting back, and the car
+                // weaved. Now a medium move is a medium slide, and the big
+                // drifts are still there at the ends of the travel.
+                float shaped = steer * ((1f - steerCenterSoftness)
+                                        + steerCenterSoftness * steer * steer);
+                float target = Mathf.Clamp(shaped * maxLateralSpeed + cornerPush,
+                                           -maxLateralSpeed, maxLateralSpeed);
+
+                // How it gets there is what makes it smooth. The old response
+                // started moving at full rate the instant the thumb moved and
+                // stopped just as abruptly, and a left-to-right flick also got
+                // a burst of extra bite halfway through - three hard edges in
+                // every swing, which is the jolt you felt.
+                //
+                // Now a big swing builds at a steady pace...
+                slideTarget = Mathf.MoveTowards(slideTarget, target,
+                                                steerAcceleration * SwingRateScale * dt);
+
+                // ...and the car follows it like a well-damped spring: it eases
+                // off the old slide, carries through the middle and settles on
+                // the new one without overshooting. Solved exactly over each
+                // frame, so it feels the same at any frame rate.
+                float w = Mathf.Max(0.5f, angleSeek);
+                float e = LateralVelocity - slideTarget;
+                float decay = Mathf.Exp(-w * dt);
+                float eNext = (e + (slideRate + w * e) * dt) * decay;
+                slideRate = (slideRate - w * (slideRate + w * e) * dt) * decay;
+                LateralVelocity = slideTarget + eNext;
+            }
+
+            LateralVelocity = Mathf.Clamp(LateralVelocity, -maxLateralSpeed, maxLateralSpeed);
         }
         else
         {
-            // Zero, NOT the current sideways speed. Seeding it with whatever
-            // drift was happening at the moment of release told the maths that
-            // the drift itself was "going straight", so it was never bled off
-            // and the car kept sliding in whatever direction it last went.
-            coastLateral = 0f;
+            // NOBODY DRIVING: the car goes dead straight. It keeps the world
+            // heading it had when the finger lifted and the road bends away
+            // underneath it - on a straight it carries on down the road, and
+            // in a corner it runs off the outside and crashes.
+            if (!coasting)
+            {
+                coasting = true;
+                coastTime = 0f;
+                coastWorldYaw = roadYaw + headingOffset;
+                // Whatever drift was on when the finger lifted is the tyres
+                // sliding, not where the car is pointed. It bleeds away below
+                // as they grip, leaving the car travelling where it faces.
+                coastSlide = LateralVelocity
+                             - CurrentSpeed * Mathf.Sin(headingOffset * Mathf.Deg2Rad);
+            }
+            coastTime += dt;
+
+            float theta = Mathf.Clamp(Mathf.DeltaAngle(roadYaw, coastWorldYaw), -85f, 85f)
+                          * Mathf.Deg2Rad;
+            coastSlide *= Mathf.Exp(-releaseRegrip * dt);
+            float wasLateral = LateralVelocity;
+            LateralVelocity = CurrentSpeed * Mathf.Sin(theta) + coastSlide;
+            slideRate = dt > 0f ? (LateralVelocity - wasLateral) / dt : 0f;
+
+            // Off the middle of a bend the road's edge is longer or shorter
+            // than its centre line. Ignoring that lets the car curve a few
+            // degrees round with the road - a little self-steering - so it is
+            // accounted for, blended in over a moment so the pace never steps.
+            float bendScale = Mathf.Clamp(1f - curvRadPerM * LateralOffset, 0.4f, 2.5f);
+            float blend = Mathf.Clamp01(coastTime / 0.25f);
+            alongRoad = CurrentSpeed * Mathf.Cos(theta) * Mathf.Lerp(1f, 1f / bendScale, blend);
         }
-
-        decay *= steerAssist;
-        LateralVelocity *= Mathf.Exp(-decay * dt);
-
-        // The old rail parked the car at a FIXED fraction of full lock the
-        // moment you counter-steered, whatever the thumb was asking for. Taking
-        // it out gave the angle back but left nothing steadying the car, so it
-        // wandered and you spent the corner fighting it - which is the chop.
-        //
-        // This steadies it toward the angle the THUMB is asking for instead:
-        // where your finger sits is the slide you get, and the car eases there
-        // rather than being yanked. Full control, and smooth, because the
-        // target only moves when your thumb does.
-        if (angleSeek > 0.01f && spinTimer <= 0f && steerAssist > 0.35f)
-        {
-            float commanded = steer * maxLateralSpeed;
-            LateralVelocity = Mathf.Lerp(LateralVelocity, commanded,
-                1f - Mathf.Exp(-angleSeek * dt));
-        }
-
-        float slideFrac = Mathf.Abs(LateralVelocity) / maxLateralSpeed;
-        if (driftHoldGrab > 0.01f && countering && slideFrac > 0.40f && spinTimer <= 0f)
-        {
-            float hold = Mathf.Sign(LateralVelocity) * maxLateralSpeed * driftHoldFraction;
-            LateralVelocity = Mathf.Lerp(LateralVelocity, hold,
-                1f - Mathf.Exp(-driftHoldGrab * dt));
-        }
-        // Taking the car back is the moment everything lands at once: grip
-        // returns, the thumb asks for an angle, and whatever sideways speed
-        // built up while coasting is still there. All three together threw the
-        // car into a drift far faster than the player asked for. While the
-        // assist is still coming back, the sideways speed may only change so
-        // fast - so a thumb landing and immediately demanding a drift gets a
-        // quick turn in, not a flick.
-        if (steerAssist < 0.97f)
-        {
-            LateralVelocity = Mathf.MoveTowards(prevLateral, LateralVelocity,
-                                                maxLateralSpeed * 1.1f * dt);
-        }
-
-        // A ceiling on how fast the slide can change at all. Nothing in normal
-        // driving comes near it, but the outward push grows with the SQUARE of
-        // speed, so at the top end a flick through the middle could swing the
-        // car far harder than the same flick does at 55mph. This keeps the
-        // response consistent from one end of a run to the other.
-        LateralVelocity = Mathf.MoveTowards(prevLateral, LateralVelocity,
-                                            maxLateralSpeed * 3.2f * dt);
-
-        LateralVelocity = Mathf.Clamp(LateralVelocity, -maxLateralSpeed, maxLateralSpeed);
 
         LateralOffset += LateralVelocity * dt;
-        DistanceTraveled += CurrentSpeed * dt;
+        DistanceTraveled += alongRoad * dt;
 
         track.EnsureGenerated(DistanceTraveled);
 
-        // Drifting means the player is actively throwing the car sideways -
-        // simply being pushed through a corner does not count, otherwise the
-        // car "drifts" every bend without any input.
-        // Purely a question of how far the car has stepped out - being carried
-        // wide through a corner counts as a drift too, which is what makes the
-        // combo build naturally on a fast line.
-        // A car nobody is steering, running wide through a bend on its own
-        // momentum, is not drifting - it is crashing slowly. No combo for it.
-        bool beingDriven = steerAssist > 0.35f;
-        IsDrifting = beingDriven && Mathf.Abs(LateralVelocity) > driftThreshold;
+        // Drifting (and scoring) is the player throwing the car sideways. A
+        // car nobody is steering, running off the outside of a bend, is not
+        // drifting - it is crashing. No combo for it.
+        IsDrifting = driving && Mathf.Abs(LateralVelocity) > driftThreshold;
         // Smoke, skid marks and the drift sound come on with the INPUT, not
         // with the slide - touch the screen and the car is already laying
         // rubber, long before it has stepped out far enough to score.
-        IsSliding = beingDriven &&
+        IsSliding = handsOn > 0.35f &&
                     (Mathf.Abs(smoothedSteer) > 0.015f ||
-                     Mathf.Abs(LateralVelocity) > driftThreshold * effectsEarlyFactor);
+                     Mathf.Abs(SlideVelocity) > driftThreshold * effectsEarlyFactor);
 
         // sustained drift timer, with a short grace window so a quick
         // straighten-up between corners doesn't reset the multiplier
@@ -795,52 +864,61 @@ public class CarController : MonoBehaviour
 
         transform.position = pos + right * LateralOffset;
 
-        // THE ROTATION IS THE REST OF THE SELF-STEER. The rig points down the
-        // road, so simply travelling along a bend yaws the car - and the
-        // camera with it - even when nothing is steering.
-        //
-        // Tracked as an OFFSET from the road's heading rather than as a frozen
-        // rotation. Slerping a held rotation toward the road's was chasing a
-        // target that was itself moving, which is what made the car look like
-        // it kept trying to turn and catching itself. The offset simply grows
-        // by whatever the road turns while nobody is driving, then unwinds at
-        // a fixed, gentle rate once somebody is.
+        // The rig points down the road while somebody is driving - the slide
+        // shows in the body's pose, below. With nobody driving it holds the
+        // world heading it had when the finger lifted, so the car, and the
+        // camera behind it, run dead straight while the road turns away.
         Quaternion roadRot = Quaternion.LookRotation(fwd, Vector3.up);
         float roadYaw = roadRot.eulerAngles.y;
-        float assist = Assist;
 
-        if (roadYawValid && !idleMode)
+        if (coasting && !idleMode)
         {
-            float roadTurned = Mathf.DeltaAngle(lastRoadYaw, roadYaw);
-            headingOffset -= roadTurned * (1f - assist);
+            headingOffset = Mathf.Clamp(Mathf.DeltaAngle(roadYaw, coastWorldYaw), -85f, 85f);
         }
-        lastRoadYaw = roadYaw;
-        roadYawValid = true;
+        else if (dt > 0f)
+        {
+            // taken back: the nose swings smoothly back into line with the road
+            headingOffset = Mathf.Lerp(headingOffset, 0f, 1f - Mathf.Exp(-RegainTurnRate * dt));
+            if (Mathf.Abs(headingOffset) < 0.01f) headingOffset = 0f;
+        }
 
-        // back in line once the player is driving again - never faster than
-        // this, so retaking the car is a lean rather than a snap
-        headingOffset = Mathf.MoveTowards(headingOffset, 0f, ResyncRate * assist * dt);
-        headingOffset = Mathf.Clamp(headingOffset, -70f, 70f);
+        // Follow the road's grade too. The rig used to stay dead level
+        // whatever the road did, so on a climb the front tyres sank into the
+        // tarmac while the rear ones hung in the air, and the other way round
+        // going down - a car that looked like it was floating on every hill.
+        float gradePitch = 0f;
+        track.SamplePose(DistanceTraveled + GradeReach, out Vector3 gradeAhead, out _, out _);
+        track.SamplePose(DistanceTraveled - GradeReach, out Vector3 gradeBehind, out _, out _);
+        Vector3 rise = gradeAhead - gradeBehind;
+        float run = new Vector2(rise.x, rise.z).magnitude;
+        if (run > 0.01f) gradePitch = -Mathf.Atan2(rise.y, run) * Mathf.Rad2Deg;
 
-        // The road's heading comes from samples a metre apart, so at speed the
-        // per-frame change arrives in lumps - a couple of frames of nothing,
-        // then a step. Feeding that straight into the car's rotation is what
-        // made the steering feel chopped up. The applied angle trails the
-        // target through a low-pass, which costs nothing and smooths it out.
-        shownHeadingOffset = dt > 0f
-            ? Mathf.Lerp(shownHeadingOffset, headingOffset, 1f - Mathf.Exp(-14f * dt))
-            : headingOffset;
-
-        transform.rotation = roadRot * Quaternion.Euler(0f, shownHeadingOffset, 0f);
+        transform.rotation = roadRot * Quaternion.Euler(0f, headingOffset, 0f)
+                             * Quaternion.Euler(gradePitch, 0f, 0f);
 
         if (carVisual == null) return;
 
         // sideways slide + nose-into-corner pose while cornering at speed
-        float slideTerm = LateralVelocity / maxLateralSpeed;
+        // The body leads: part of its angle comes from the slide the thumb is
+        // asking for, not only the slide that has built up so far. Recorded
+        // driving had the body trailing the thumb by 430 ms, which is the
+        // delay you felt; leading halves it without touching the handling.
+        float poseSlide = coasting ? coastSlide
+            : Mathf.Lerp(LateralVelocity, slideTarget, bodyLead);
+        float slideTerm = poseSlide / maxLateralSpeed;
         float cornerTerm = currentCurvDegPerM * CurrentSpeed * cornerDriftVisual / driftAngle;
         float driftPercent = idleMode
             ? Mathf.Clamp(idleYawPercent, -1f, 1f)
             : Mathf.Clamp(slideTerm + cornerTerm, -1f, 1f);
+
+        // THE BODY ANGLE. It used to be a straight multiple of the slide, and
+        // with a big full-lock angle that meant the smallest nudge of the
+        // thumb swung the body round by 10-20 degrees - every little
+        // correction looked like a drift the game was doing for you. Small
+        // slides now get a small angle, and the angle only builds to full
+        // strength as the slide grows into a real drift. Full drifts are
+        // exactly as big as before.
+        if (!idleMode) driftPercent = EaseSmallDrifts(driftPercent, dt);
 
         // Nobody driving: the body squares back up rather than hanging at a
         // drift angle with no one holding it there. The car keeps running wide
@@ -881,28 +959,64 @@ public class CarController : MonoBehaviour
             if (p > 0.88f) jumpY -= (p - 0.88f) / 0.12f * 0.06f;
         }
 
-        // hover car: banks hard into drifts, dipping until the rim kisses
-        // the road (handling is untouched - this is pure animation)
+        // Hover car: floats, and banks hard into drifts, settling a little
+        // lower as it leans. It used to dip until the rim touched the road -
+        // and banked over, the low side of the body swung down by half its
+        // width times the lean, so it went through. However far it leans or
+        // pitches, it now always keeps its lowest edge clear of the road.
+        // (Handling is untouched - this is pure animation.)
         float hoverPitch = 0f;
         float bank = -driftPercent * driftBankAngle;
         if (hoverMode && carVisual != null)
         {
             float dip = Mathf.Abs(driftPercent);
             float bob = Mathf.Sin(Time.time * 2.4f) * 0.12f * (1f - dip);
-            float height = hoverHeight * (1f - 0.7f * dip);
-            carVisual.localPosition = new Vector3(0f, appliedVisualY + height + bob + jumpY, 0f);
             hoverPitch = Mathf.Sin(Time.time * 1.7f) * 2.2f * (1f - dip);
             bank = -driftPercent * hoverBankAngle;
+
+            // how far the lowest corner of the body drops for the lean and
+            // pitch it has now or is heading for
+            float lean = Mathf.Max(Mathf.Abs(bank), Mathf.Abs(smoothedBank)) * Mathf.Deg2Rad;
+            float tilt = (Mathf.Abs(hoverPitch) + Mathf.Abs(smoothedJumpPitch)) * Mathf.Deg2Rad;
+            float needed = bodyWidth * 0.5f * Mathf.Sin(lean)
+                         + bodyLength * 0.5f * Mathf.Sin(tilt)
+                         + hoverMinGap;
+
+            float wanted = hoverHeight * (1f - hoverDriftDrop * dip) + bob;
+            float target = Mathf.Max(wanted, needed);
+            // eased, so settling into a drift is a glide, not a drop
+            hoverLift = dt > 0f
+                ? Mathf.Lerp(hoverLift, target, 1f - Mathf.Exp(-6f * dt))
+                : target;
+            // but never late getting clear of the road
+            hoverLift = Mathf.Max(hoverLift, needed);
+
+            carVisual.localPosition = new Vector3(0f, appliedVisualY + hoverLift + jumpY, 0f);
         }
         else if (carVisual != null && centerVisual)
         {
             carVisual.localPosition = new Vector3(0f, appliedVisualY + jumpY, 0f);
         }
 
-        // ease the drift angle itself, so the body and its pivot stay in sync
-        smoothedDriftYaw = dt > 0f
-            ? Mathf.LerpAngle(smoothedDriftYaw, visualYaw, Mathf.Clamp01(driftRotationSpeed * dt))
-            : visualYaw;
+        // Ease the drift angle itself, so the body and its pivot stay in sync.
+        // A well-damped spring rather than a plain lag: the plain lag turned
+        // the body at its fastest the very instant the slide changed, which
+        // is the snap. The spring picks the angle up gently, swings through
+        // and settles without overshooting.
+        if (dt > 0f)
+        {
+            float w = Mathf.Max(0.5f, driftRotationSpeed * 1.7f);
+            float e = Mathf.DeltaAngle(visualYaw, smoothedDriftYaw);
+            float decay = Mathf.Exp(-w * dt);
+            float eNext = (e + (driftYawRate + w * e) * dt) * decay;
+            driftYawRate = (driftYawRate - w * (driftYawRate + w * e) * dt) * decay;
+            smoothedDriftYaw = visualYaw + eNext;
+        }
+        else
+        {
+            smoothedDriftYaw = visualYaw;
+            driftYawRate = 0f;
+        }
         // Folded back into -180..180 once the spin is over. LerpAngle takes
         // the short way round but does not wrap its result, so without this
         // the value wanders further from zero with every spin and anything
@@ -932,6 +1046,54 @@ public class CarController : MonoBehaviour
         carVisual.localPosition += new Vector3(pivotShift.x, 0f, pivotShift.z);
     }
 
+    /// <summary>
+    /// Scales a drift pose so small ones are gentle and big ones are untouched:
+    /// the gain rises smoothly from smallDriftAngleScale to 1 as the drift
+    /// grows to fullDriftAngleFrom.
+    ///
+    /// The size it goes by is REMEMBERED - it rises straight away but lets go
+    /// slowly. Read fresh every frame, a big left-to-right flick passed
+    /// through a small pose on its way across and the body eased off in the
+    /// middle of the swing, then snatched again on the far side. With the
+    /// memory, a committed flick swings through in one even motion, and only
+    /// genuinely small driving stays gentle.
+    /// </summary>
+    float EaseSmallDrifts(float pose, float dt)
+    {
+        float size = Mathf.Abs(pose);
+        driftSize = dt > 0f && size < driftSize
+            ? Mathf.Lerp(driftSize, size, 1f - Mathf.Exp(-DriftMemoryFade * dt))
+            : size;
+        float grow = Mathf.SmoothStep(0f, 1f, driftSize / Mathf.Max(0.01f, fullDriftAngleFrom));
+        return pose * Mathf.Lerp(smallDriftAngleScale, 1f, grow);
+    }
+
+    float driftSize;                        // remembered drift size, 0-1
+    const float DriftMemoryFade = 1.5f;     // per second
+    // How much road either side of the car the felt curvature averages over,
+    // in seconds of travel at the current speed.
+    const float CurveBlendSeconds = 0.4f;
+
+    /// <summary>
+    /// The road's curvature averaged over a short stretch centred on
+    /// <paramref name="dist"/>, weighted toward the middle. Centred, so a
+    /// bend is felt a moment before it arrives and let go of a moment after
+    /// it ends, with no lag.
+    /// </summary>
+    float FeltCurvature(float dist)
+    {
+        float reach = Mathf.Max(3f, CurrentSpeed * CurveBlendSeconds);
+        float sum = 0f, weights = 0f;
+        for (int i = -2; i <= 2; i++)
+        {
+            float w = 3f - Mathf.Abs(i);          // 1 2 3 2 1
+            track.SamplePose(dist + reach * i * 0.5f, out _, out _, out float c);
+            sum += w * c;
+            weights += w;
+        }
+        return sum / weights;
+    }
+
     void UpdateSkidTrails(float visualYaw)
     {
         if (trailL == null) return;
@@ -956,7 +1118,7 @@ public class CarController : MonoBehaviour
             smokeL.transform.position = trailL.transform.position + Vector3.up * 0.12f;
             smokeR.transform.position = trailR.transform.position + Vector3.up * 0.12f;
             // harder slides = thicker smoke; hover cars make none
-            float intensity = Mathf.Clamp01(Mathf.Abs(LateralVelocity) / maxLateralSpeed + (IsSpinning ? 0.6f : 0f));
+            float intensity = Mathf.Clamp01(Mathf.Abs(SlideVelocity) / maxLateralSpeed + (IsSpinning ? 0.6f : 0f));
             // a decent puff right away, building to a cloud in a full slide
             float rate = emit && !hoverMode ? smokeRate * (0.85f + 1.5f * intensity) : 0f;
             var eL = smokeL.emission; eL.rateOverTime = rate;
@@ -966,7 +1128,15 @@ public class CarController : MonoBehaviour
         // hover car: sparks fly from the rim on the side it's banking toward
         if (sparkL != null)
         {
-            Vector3 sparkBase = new Vector3(bodyPos.x, transform.position.y + 0.07f, bodyPos.z);
+            // under the low edge of the body - the hover car no longer touches
+            // the road, so the sparks crackle off its underside instead
+            float sparkY = transform.position.y + 0.07f;
+            if (hoverMode)
+            {
+                sparkY += Mathf.Max(0f, hoverLift
+                    - bodyWidth * 0.5f * Mathf.Abs(Mathf.Sin(smoothedBank * Mathf.Deg2Rad)));
+            }
+            Vector3 sparkBase = new Vector3(bodyPos.x, sparkY, bodyPos.z);
             sparkL.transform.position = sparkBase
                 + wheelRot * new Vector3(-rearWheelHalfWidth * 1.1f, 0f, -rearWheelBack * 0.5f);
             sparkR.transform.position = sparkBase
@@ -1036,7 +1206,6 @@ public class CarController : MonoBehaviour
         visualRotationCaptured = true;
         bodyCentreMeasured = false;
         wheelSeatDone = false;
-        wheelSeatTries = 0;   // re-measured for the new model
     }
 
     /// <summary>
@@ -1084,7 +1253,6 @@ public class CarController : MonoBehaviour
     public float frontWheelSteerAngle = 38f;
     WheelSpinner wheelSpin;
     bool wheelSeatDone;
-    int wheelSeatTries;
 
     /// <summary>
     /// Drops the fitted model so its WHEELS rest on the road. Model bounds are
@@ -1095,13 +1263,31 @@ public class CarController : MonoBehaviour
     void SeatOnWheels()
     {
         if (wheelSeatDone || carVisual == null) return;
-        if (wheelSpin == null || wheelSeatTries > 90) { wheelSeatDone = true; return; }
 
-        wheelSeatTries++;
-        if (!wheelSpin.TryGetWheelBottom(out float bottom)) return;
+        // The hover car used to be seated with its float already applied, so
+        // the seating took the float straight back out: it sat on the road,
+        // and every time it dipped into a drift it sank through it. Now it is
+        // seated on the ground like everything else and floats up from there.
+        wheelSeatDone = true;
 
-        float delta = transform.position.y - bottom;
-        if (Mathf.Abs(delta) > 0.004f)
+        // Where the tyres touch the ground, in the model holder's own space.
+        // That space turns and leans with the body's drift pose, so nothing
+        // the car is doing at this moment can creep into the answer, and each
+        // tyre is measured as the cylinder it is rather than from Unity's
+        // world box - which on some models reaches well below the real tyre
+        // and was lifting those cars clear of the road.
+        float bottom;
+        if (wheelSpin == null || !wheelSpin.TryGetContactHeight(carVisual, out bottom))
+        {
+            // No wheels found on this model: rest it on its bodywork instead,
+            // ignoring the odd part that hangs below everything else.
+            bottom = RestingHeightIn(carVisual);
+        }
+
+        // The holder sits square under the rig, so the tyres touch the road
+        // when the holder is lowered by exactly that much.
+        float delta = -bottom - appliedVisualY;
+        if (Mathf.Abs(delta) > 0.0005f)
         {
             baseVisualY += delta;
             appliedVisualY += delta;
@@ -1110,14 +1296,42 @@ public class CarController : MonoBehaviour
 
         // and put the skid marks under the real rear tyres rather than at a
         // guessed fraction of the bodywork
-        if (wheelSpin.TryGetRearWheelOffsets(transform, out float hw, out float back))
+        if (wheelSpin != null && wheelSpin.TryGetRearWheelOffsets(transform, out float hw, out float back))
         {
             rearWheelHalfWidth = Mathf.Clamp(hw, 0.3f, 1.4f);
             rearWheelBack = Mathf.Clamp(back, 0.4f, 2.2f);
         }
-
-        wheelSeatDone = true;
     }
+
+    /// <summary>
+    /// The lowest point of the bodywork in <paramref name="frame"/>'s space,
+    /// ignoring a few parts that hang below everything else.
+    /// </summary>
+    static float RestingHeightIn(Transform frame)
+    {
+        var rends = frame.GetComponentsInChildren<Renderer>(true);
+        if (rends.Length == 0) return 0f;
+        var lows = new List<float>(rends.Length);
+        for (int i = 0; i < rends.Length; i++)
+        {
+            Bounds lb = rends[i].localBounds;
+            Transform t = rends[i].transform;
+            float low = float.MaxValue;
+            for (int c = 0; c < 8; c++)
+            {
+                Vector3 corner = new Vector3(
+                    (c & 1) == 0 ? lb.min.x : lb.max.x,
+                    (c & 2) == 0 ? lb.min.y : lb.max.y,
+                    (c & 4) == 0 ? lb.min.z : lb.max.z);
+                low = Mathf.Min(low, frame.InverseTransformPoint(t.TransformPoint(corner)).y);
+            }
+            lows.Add(low);
+        }
+        lows.Sort();
+        return lows[Mathf.Min(lows.Count - 1, Mathf.Max(0, lows.Count / 8))];
+    }
+
+
     float bodyLength = 4.2f, bodyWidth = 1.9f, bodyHeight = 1.3f;
     Vector3 bodyCenterLocal = new Vector3(0f, 0.65f, 0f);
 
@@ -1413,6 +1627,7 @@ public class CarController : MonoBehaviour
         spinTimer = 0f;
         IsDrifting = false;
         DriftTime = 0f;
+        ClearCoast();
         if (trailL != null) { trailL.Clear(); trailR.Clear(); }
         ApplyPose(0f);
     }
@@ -1554,6 +1769,9 @@ public class CarController : MonoBehaviour
         tickedThisFrame = true;
         if (track == null) return;
         idleMode = true;
+        // the showcase drive is on rails - nothing is coasting
+        coasting = false;
+        driving = true;
 
         CurrentSpeed = Mathf.MoveTowards(CurrentSpeed, baseSpeed, 8f * dt);
         DistanceTraveled += CurrentSpeed * dt;
@@ -1568,8 +1786,7 @@ public class CarController : MonoBehaviour
         // the pose code needs the curvature under the car as well: it is what
         // points the nose INTO the corner. Without it the body yaws purely on
         // the slide and ends up facing the wrong way through a bend.
-        track.SamplePose(DistanceTraveled, out _, out _, out float curveHere);
-        currentCurvDegPerM = curveHere;
+        currentCurvDegPerM = FeltCurvature(DistanceTraveled);
 
         // nose into the bend: positive curvature is a right-hand turn, and a
         // positive yaw points the car right, so the sign carries straight over
@@ -1594,6 +1811,8 @@ public class CarController : MonoBehaviour
         float want = -curveAhead * CurrentSpeed * showcaseDriftGain;
         want = Mathf.Clamp(want, -maxLateralSpeed * 0.5f, maxLateralSpeed * 0.5f);
         LateralVelocity = Mathf.MoveTowards(LateralVelocity, want, 14f * dt);
+        slideTarget = LateralVelocity;
+        slideRate = 0f;
 
         // the showcase car holds the middle of the road - the slide is pure
         // presentation, so it must not push the car off the centre line
@@ -1679,6 +1898,7 @@ public class CarController : MonoBehaviour
     {
         LateralOffset = lateral;
         LateralVelocity = 0f;
+        ClearCoast();
         ApplyPose(0f);
     }
 
@@ -1688,6 +1908,7 @@ public class CarController : MonoBehaviour
         LateralOffset = 0f;
         LateralVelocity = 0f;
         spinTimer = 0f;
+        ClearCoast();
         ApplyPose(0f);
     }
 
@@ -1707,33 +1928,84 @@ public class CarController : MonoBehaviour
 
     float ReadSteerInput()
     {
-        // touch: thumb-slide relative to where the finger went down
-        if (Input.touchCount > 0)
+        // touch or mouse: thumb-slide relative to where the finger went down
+        if (TryGetSteerPointer(out float x, out bool fresh))
         {
-            Touch t = Input.GetTouch(0);
-            if (t.phase == TouchPhase.Began || !anchorActive)
+            inputHeld = true;
+            if (fresh || !anchorActive)
             {
-                touchAnchorX = t.position.x;
+                touchAnchorX = x;
                 anchorActive = true;
             }
-            return SteerFromAnchor(t.position.x) * (thumbControlsRear ? -1f : 1f);
-        }
-
-        // mouse drag: editor / desktop testing
-        if (Input.GetMouseButton(0))
-        {
-            if (Input.GetMouseButtonDown(0) || !anchorActive)
-            {
-                touchAnchorX = Input.mousePosition.x;
-                anchorActive = true;
-            }
-            return SteerFromAnchor(Input.mousePosition.x) * (thumbControlsRear ? -1f : 1f);
+            return SteerFromAnchor(x) * (thumbControlsRear ? -1f : 1f);
         }
 
         anchorActive = false;
 
-        // keyboard fallback
-        return Input.GetAxisRaw("Horizontal");
+        // keyboard fallback for the editor: holding a steering key - or
+        // up / W to hold it straight - counts as a hand on the wheel
+        float key = Input.GetAxisRaw("Horizontal");
+        inputHeld = key != 0f || Input.GetAxisRaw("Vertical") > 0f;
+        return key;
+    }
+
+    /// <summary>
+    /// Finds the finger doing the steering. It sticks with the same finger for
+    /// as long as it is down; if that one lifts while another is still on the
+    /// screen, steering carries on with the other, re-anchored where it is so
+    /// nothing jumps. Only when no finger is down has the player let go.
+    /// </summary>
+    bool TryGetSteerPointer(out float x, out bool fresh)
+    {
+        bool found = FindSteerPointer(out x, out fresh);
+        lastPointerX = found ? x : -1f;
+        return found;
+    }
+
+    bool FindSteerPointer(out float x, out bool fresh)
+    {
+        x = 0f;
+        fresh = false;
+
+        int count = Input.touchCount;
+        if (count > 0)
+        {
+            for (int i = 0; i < count; i++)
+            {
+                Touch t = Input.GetTouch(i);
+                if (t.fingerId == steerFingerId && TouchActive(t))
+                {
+                    x = t.position.x;
+                    return true;
+                }
+            }
+            for (int i = 0; i < count; i++)
+            {
+                Touch t = Input.GetTouch(i);
+                if (!TouchActive(t)) continue;
+                steerFingerId = t.fingerId;
+                x = t.position.x;
+                fresh = true;
+                return true;
+            }
+            steerFingerId = -1;
+            return false;
+        }
+        steerFingerId = -1;
+
+        // mouse drag: editor / desktop testing
+        if (Input.GetMouseButton(0))
+        {
+            x = Input.mousePosition.x;
+            fresh = Input.GetMouseButtonDown(0);
+            return true;
+        }
+        return false;
+    }
+
+    static bool TouchActive(Touch t)
+    {
+        return t.phase != TouchPhase.Ended && t.phase != TouchPhase.Canceled;
     }
 
     float SteerFromAnchor(float x)
@@ -1747,5 +2019,33 @@ public class CarController : MonoBehaviour
         else if (steer < -1f) { touchAnchorX = x + range; steer = -1f; }
 
         return steer;
+    }
+
+    // ------------------------------------------------------------ recording
+
+    /// <summary>Frame number of the last Tick - the recorder logs only frames the car was driven.</summary>
+    public int LastTickFrame { get; private set; }
+    float lastRawSteer;
+    float lastPointerX = -1f;
+
+    public const string DebugHeader =
+        "t,dt,pointerX,rawSteer,steer,driving,speed,dist,latOffset,latVel,slideVel," +
+        "slideTarget,slideRate,curv,driftPct,bodyYaw,bodyYawRate,bank,rigYaw,bodyWorldYaw," +
+        "headingOffset,visualY,drifting";
+
+    /// <summary>One line of numbers for DriveRecorder. Read-only - changes nothing.</summary>
+    public string DebugRow()
+    {
+        var ci = System.Globalization.CultureInfo.InvariantCulture;
+        float bodyWorldYaw = carVisual != null ? carVisual.eulerAngles.y : 0f;
+        return string.Format(ci,
+            "{0:0.0000},{1:0.0000},{2:0.0},{3:0.0000},{4:0.0000},{5},{6:0.000},{7:0.00},{8:0.0000},{9:0.0000},{10:0.0000}," +
+            "{11:0.0000},{12:0.000},{13:0.0000},{14:0.0000},{15:0.000},{16:0.00},{17:0.000},{18:0.000},{19:0.000}," +
+            "{20:0.000},{21:0.0000},{22}",
+            Time.time, Time.deltaTime, lastPointerX, lastRawSteer, smoothedSteer, driving ? 1 : 0,
+            CurrentSpeed, DistanceTraveled, LateralOffset, LateralVelocity, SlideVelocity,
+            slideTarget, slideRate, currentCurvDegPerM, currentDriftPercent, smoothedDriftYaw,
+            driftYawRate, smoothedBank, transform.eulerAngles.y, bodyWorldYaw,
+            headingOffset, appliedVisualY, IsDrifting ? 1 : 0);
     }
 }

@@ -251,7 +251,7 @@ public class AudioManager : MonoBehaviour
             // starts as soon as the car steps out, not only on a scoring drift
             if (car.EffectsActive)
             {
-                float slide = Mathf.Clamp01(Mathf.Abs(car.LateralVelocity) / car.maxLateralSpeed);
+                float slide = Mathf.Clamp01(Mathf.Abs(car.SlideVelocity) / car.maxLateralSpeed);
                 // quiet scrub at the start of a slide, full squeal in a drift
                 targetSkid = skidVolume * Mathf.Lerp(0.45f, 1f, slide * 2f);
                 skidSource.pitch = Mathf.Lerp(0.9f, 1.25f, slide);
