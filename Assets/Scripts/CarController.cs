@@ -39,7 +39,7 @@ public class CarController : MonoBehaviour
              "so holding a drift and making corrections is calmer, while a " +
              "full slide of the thumb still gives the full drift.")]
     // (GameManager sets this at startup - change it there.)
-    [Range(0f, 0.9f)] public float steerCenterSoftness = 0.6f;
+    [Range(0f, 0.9f)] public float steerCenterSoftness = 0.55f;
     [Tooltip("Flips all steering input (settings menu option).")]
     public bool invertSteering = false;
     [Tooltip("Ignores the thumb entirely - used while a countdown is running.")]
@@ -137,19 +137,18 @@ public class CarController : MonoBehaviour
     public float driftBankAngle = 7f;
     [Tooltip("How much the nose points into corners (sells the drift).")]
     public float cornerDriftVisual = 0.45f;
-    [Tooltip("Body angle for a SMALL slide, as a share of the full-size " +
-             "angle. Lower = small corrections barely turn the body, so it " +
-             "only really swings out once you commit to a drift.")]
-    [Range(0.05f, 1f)] public float smallDriftAngleScale = 0.3f;
+    [Tooltip("Body angle for the smallest slides, as a share of the full-size " +
+             "angle. The share then rises smoothly with the slide, reaching " +
+             "the full angle at full lock. Lower = small corrections turn the " +
+             "body less.")]
+    // (GameManager sets this at startup - change it there.)
+    [Range(0.05f, 1f)] public float smallDriftAngleScale = 0.45f;
     [Tooltip("How much the body turns with your THUMB rather than waiting for " +
              "the slide to build. 0 = the body only follows the slide (it " +
              "trails your thumb by nearly half a second); higher = the nose " +
              "starts turning as you steer and the slide follows, like a real " +
              "car.")]
     [Range(0f, 1f)] public float bodyLead = 0.5f;
-    [Tooltip("Size of slide (share of full lock) from which the body angle " +
-             "is at full strength. Below it the angle is eased down.")]
-    [Range(0.05f, 1f)] public float fullDriftAngleFrom = 0.4f;
 
     [Header("Crash")]
     public float carRadius = 1.1f;
@@ -1047,9 +1046,13 @@ public class CarController : MonoBehaviour
     }
 
     /// <summary>
-    /// Scales a drift pose so small ones are gentle and big ones are untouched:
-    /// the gain rises smoothly from smallDriftAngleScale to 1 as the drift
-    /// grows to fullDriftAngleFrom.
+    /// Scales a drift pose so small ones are gentle and big ones are untouched.
+    /// The share of the full angle rises with the square root of the drift's
+    /// size: from smallDriftAngleScale for the smallest slide to all of it at
+    /// full lock. It used to stay low and then climb steeply over a narrow
+    /// band, which read as the car being on rails until the thumb passed a
+    /// threshold and then suddenly swinging out. This curve has no bend in
+    /// it: every bit more thumb turns the body a bit more.
     ///
     /// The size it goes by is REMEMBERED - it rises straight away but lets go
     /// slowly. Read fresh every frame, a big left-to-right flick passed
@@ -1064,7 +1067,7 @@ public class CarController : MonoBehaviour
         driftSize = dt > 0f && size < driftSize
             ? Mathf.Lerp(driftSize, size, 1f - Mathf.Exp(-DriftMemoryFade * dt))
             : size;
-        float grow = Mathf.SmoothStep(0f, 1f, driftSize / Mathf.Max(0.01f, fullDriftAngleFrom));
+        float grow = Mathf.Sqrt(Mathf.Clamp01(driftSize));
         return pose * Mathf.Lerp(smallDriftAngleScale, 1f, grow);
     }
 

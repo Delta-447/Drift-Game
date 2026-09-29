@@ -140,10 +140,22 @@ public class GameManager : MonoBehaviour
     /// (see CarController.steerCenterSoftness): small and medium moves slide
     /// less, while a full slide of the thumb still gives the full drift.
     /// </summary>
-    // 0.6, up from 0.45: small corrections were still a bit too sensitive.
-    // Only the middle of the travel changes - full lock, the drift angle and
-    // how quickly the car responds are all exactly as they were.
-    const float SteerCenterSoftness = 0.6f;
+    // 0.55: 0.45 was a bit too sensitive; 0.6 made small moves so gentle the
+    // car felt on rails until the thumb went past a certain point. Full lock,
+    // the drift angle and how quickly the car responds are unchanged.
+    const float SteerCenterSoftness = 0.55f;
+
+    /// <summary>
+    /// How far the body turns for small and medium slides - pure look, the
+    /// handling is untouched. The angle now grows smoothly with the slide all
+    /// the way to full lock (see CarController.EaseSmallDrifts): small moves
+    /// turn the body a little more than before, medium-to-big ones a little
+    /// less, and full drifts keep their full angle.
+    /// </summary>
+    // share of the full angle the smallest slide gets
+    const float SmallDriftAngleScale = 0.45f;
+    // how much the nose turns into a bend by itself (was 0.45)
+    const float CornerDriftVisual = 0.35f;
 
     /// <summary>
     /// How fast the body swings to the angle the physics is asking for. This
@@ -178,8 +190,12 @@ public class GameManager : MonoBehaviour
     const float HoverHeight = 0.8f;
 
 
-    /// <summary>Shown in the corner of the lobby. Bump it when you ship.</summary>
-    const string GameVersion = "V1.0.0";
+    /// <summary>
+    /// Shown in the corner of the lobby. Read from Unity's own version number
+    /// (Project Settings > Player > Version), so the two can never disagree -
+    /// change it there, not here.
+    /// </summary>
+    static string GameVersion { get { return "V" + Application.version; } }
 
 
 
@@ -249,7 +265,116 @@ public class GameManager : MonoBehaviour
     bool useMph = true;
     float baseSteerAccel;
     int invertSteer;
-    Text invertBtnLabel, unitsBtnLabel;
+    Text invertBtnLabel, unitsBtnLabel, languageBtnLabel;
+    GameObject languagePanel;
+    static bool reopenSettingsAfterReload;
+
+    /// <summary>
+    /// For the game's name: it stays in its own lettering whatever the
+    /// language, like a logo.
+    /// </summary>
+    void KeepGameFont(Text t, int size)
+    {
+        t.font = uiFont;
+        t.fontSize = Mathf.RoundToInt(size * FontScale);
+        t.fontStyle = usingCustomFont ? FontStyle.Bold : FontStyle.BoldAndItalic;
+    }
+
+    /// <summary>
+    /// The list of languages, each written in its own language and lettering,
+    /// over the settings screen.
+    /// </summary>
+    void BuildLanguagePanel(Transform uiRoot)
+    {
+        languagePanel = MakePanel(uiRoot, "LanguagePanel");
+
+        var dimGo = new GameObject("Dim");
+        dimGo.transform.SetParent(languagePanel.transform, false);
+        var dim = dimGo.AddComponent<Image>();
+        dim.color = new Color(0f, 0f, 0f, 0.72f);
+        var dimRt = dim.rectTransform;
+        dimRt.anchorMin = Vector2.zero;
+        dimRt.anchorMax = Vector2.one;
+        dimRt.offsetMin = dimRt.offsetMax = Vector2.zero;
+        // tapping outside the list closes it
+        var dimBtn = dimGo.AddComponent<Button>();
+        dimBtn.transition = Selectable.Transition.None;
+        dimBtn.onClick.AddListener(CloseLanguages);
+
+        MakeCard(languagePanel.transform, new Vector2(0f, 0f), new Vector2(980f, 1180f),
+            new Color(0.13f, 0.09f, 0.2f, 0.97f));
+        var title = MakeText(languagePanel.transform, "LanguageTitle", 70, TextAnchor.MiddleCenter,
+            new Vector2(0.5f, 0.5f), new Vector2(0f, 500f), new Vector2(900f, 100f));
+        title.text = "LANGUAGE";
+        title.color = new Color(1f, 0.72f, 0.12f);
+
+        const float ColX = 225f;
+        const float Top = 360f;
+        const float Step = 124f;
+        for (int i = 0; i < Loc.Count; i++)
+        {
+            var lang = (Loc.Lang)i;
+            int row = i / 2;
+            bool last = i == Loc.Count - 1 && Loc.Count % 2 == 1;
+            float x = last ? 0f : (i % 2 == 0 ? -ColX : ColX);
+            bool chosen = lang == Loc.Current;
+            var label = MakeButton(languagePanel.transform, "", 40,
+                new Vector2(x, Top - row * Step), new Vector2(420f, 104f),
+                () => PickLanguage(lang),
+                chosen ? new Color(0.30f, 0.62f, 0.35f) : (Color?)null);
+
+            // each name in its own lettering, whatever the current language
+            Font own = Loc.DisplayFontFor(lang);
+            label.font = own != null ? own : uiFont;
+            label.fontStyle = own != null ? FontStyle.Normal
+                            : usingCustomFont ? FontStyle.Bold : FontStyle.BoldAndItalic;
+            label.fontSize = Mathf.RoundToInt(40 * FontScale * Loc.SizeScale(lang));
+            var shown = label as LocText;
+            string name = Loc.Display(Loc.NativeName(lang), lang);
+            if (shown != null) shown.SetShown(name);
+            else label.text = name;
+
+            // a language whose font is missing cannot be picked
+            if (!Loc.Usable(lang))
+                label.transform.parent.GetComponent<Button>().interactable = false;
+        }
+
+        // inside the card with room to spare: the card ends at -590, the last
+        // row of names at -312
+        MakeCloseButton(languagePanel.transform, new Vector2(0f, -475f), CloseLanguages);
+
+        languagePanel.SetActive(false);
+    }
+
+    void OpenLanguages()
+    {
+        if (languagePanel == null) return;
+        languagePanel.SetActive(true);
+        languagePanel.transform.SetAsLastSibling();
+        audioMan.PlayPop();
+    }
+
+    void CloseLanguages()
+    {
+        if (languagePanel != null) languagePanel.SetActive(false);
+        audioMan.PlayTap();
+    }
+
+    /// <summary>
+    /// Saves the language and reloads the scene, so every screen is rebuilt in
+    /// it. Only reachable from the menu, so no run is lost; the player comes
+    /// back to the settings screen they were on.
+    /// </summary>
+    void PickLanguage(Loc.Lang lang)
+    {
+        if (lang == Loc.Current) { CloseLanguages(); return; }
+        Loc.Set(lang);
+        PlayerPrefs.Save();
+        reopenSettingsAfterReload = true;
+        Time.timeScale = 1f;
+        UnityEngine.SceneManagement.SceneManager.LoadScene(
+            UnityEngine.SceneManagement.SceneManager.GetActiveScene().buildIndex);
+    }
 
     // ------------------------------------------------------------- car shop
 
@@ -479,7 +604,7 @@ public class GameManager : MonoBehaviour
         loginPending = false;
         loginPanel.SetActive(false);
         if (showcaseRoot != null) showcaseRoot.SetActive(false);
-        menuCoinsText.text = "COINS  " + totalCoins;
+        menuCoinsText.text = Loc.F("COINS  {0}", totalCoins);
     }
 
     void Start()
@@ -554,6 +679,8 @@ public class GameManager : MonoBehaviour
         car.steerSmoothing = SteerSmoothing;
         car.angleSeek = AngleSeek;
         car.steerCenterSoftness = SteerCenterSoftness;
+        car.smallDriftAngleScale = SmallDriftAngleScale;
+        car.cornerDriftVisual = CornerDriftVisual;
         car.driftRotationSpeed = DriftRotationSpeed;
         car.hoverHeight = HoverHeight;
 
@@ -578,6 +705,14 @@ public class GameManager : MonoBehaviour
         EquipSelected();
         AssignCurrencyIcons();
         EnterMenu();
+
+        // back from switching language: straight back to where the player was
+        if (reopenSettingsAfterReload)
+        {
+            reopenSettingsAfterReload = false;
+            OpenSettings();
+            SetSettingsTab(1);
+        }
     }
 
     // Flat art everywhere a coin or a tyre is used as an ICON. The 3D models
@@ -937,7 +1072,7 @@ public class GameManager : MonoBehaviour
         // the lobby is always daylight - a run that ended at night or in the
         // snow used to leave its sky behind
         ResetBiome();
-        menuCoinsText.text = "COINS  " + totalCoins;
+        menuCoinsText.text = Loc.F("COINS  {0}", totalCoins);
 
         // the daily reward waits until the opening sequence has finished
         if (loginPending && !introRunning)
@@ -946,12 +1081,13 @@ public class GameManager : MonoBehaviour
             showcaseRoot.SetActive(true);
 
             int day = (loginStreakNew - 1) % 7 + 1;
-            loginDayText.text = "DAY " + day + (loginStreakNew > 7 ? "  (STREAK " + loginStreakNew + ")" : "");
+            loginDayText.text = Loc.F("DAY {0}", day)
+                + (loginStreakNew > 7 ? "  " + Loc.F("(STREAK {0})", loginStreakNew) : "");
             loginRewardText.fontSize = Mathf.RoundToInt((loginAlreadyClaimed ? 36 : 56) * FontScale);
             loginRewardText.text = loginAlreadyClaimed ? "COME BACK TOMORROW!"
-                                                       : "+" + loginRewardCoins + " COINS";
+                                                       : Loc.F("+{0} COINS", loginRewardCoins);
             loginCarText.gameObject.SetActive(loginUnlocksCar);
-            if (loginUnlocksCar) loginCarText.text = "NEW CAR!\n" + Cars[RewardCarIndex].name;
+            if (loginUnlocksCar) loginCarText.text = Loc.F("NEW CAR!\n{0}", Cars[RewardCarIndex].name);
             claimBtnLabel.text = loginAlreadyClaimed ? "OK" : "CLAIM";
 
             bool rewardOwned = OwnedCar(RewardCarIndex);
@@ -981,7 +1117,7 @@ public class GameManager : MonoBehaviour
         bonusText.gameObject.SetActive(false);
         driftText.gameObject.SetActive(false);
         SetHudVisible(false);
-        menuBestText.text = "BEST  " + best;
+        menuBestText.text = Loc.F("BEST  {0}", best);
         // back to the lobby theme (the intro owns the music until it hands over)
         if (audioMan != null && !introRunning) audioMan.PlayMenuMusic();
     }
@@ -1065,14 +1201,22 @@ public class GameManager : MonoBehaviour
     GameObject settingsAudioTab, settingsGeneralTab, settingsCreditsTab;
     Text settingsTabAudio, settingsTabGeneral, settingsTabCredits;
 
-    const string CreditsText =
-        "DRIFTLINE ETERNAL\nby MEIND GAMES\n\n" +
-        "3D MODELS\n\n" +
-        "Nature Pack - Quaternius\n" +
-        "Low Poly Car Pack - Designersoup\n\n" +
-        "AUDIO\n\n" +
-        "Music and sound effects\ncreated for this game\n\n" +
-        "All models used under their\nrespective licenses.";
+    static string CreditsText
+    {
+        get
+        {
+            return "DRIFTLINE ETERNAL\n" + Loc.T("by MEIND GAMES") + "\n\n" +
+                Loc.T("3D MODELS") + "\n\n" +
+                "Nature Pack - Quaternius\n" +
+                "Low Poly Car Pack - Designersoup\n\n" +
+                Loc.T("AUDIO") + "\n\n" +
+                Loc.T("Music and sound effects\ncreated for this game") + "\n\n" +
+                Loc.T("FONTS") + "\n\n" +
+                "Noto Sans - Google\nRusso One - Jovanny Lemonad\n" +
+                Loc.T("(SIL Open Font License)") + "\n\n" +
+                Loc.T("All models used under their\nrespective licenses.");
+        }
+    }
 
     void SetSettingsTab(int tab)
     {
@@ -1099,7 +1243,7 @@ public class GameManager : MonoBehaviour
 
     string InvertLabel()
     {
-        return "STEERING: " + (invertSteer == 1 ? "INVERTED" : "NORMAL");
+        return Loc.F("STEERING: {0}", Loc.T(invertSteer == 1 ? "INVERTED" : "NORMAL"));
     }
 
     void SetVolume(float v) { volumeSetting = v; PlayerPrefs.SetFloat("Volume", v); ApplySettings(); }
@@ -1124,8 +1268,8 @@ public class GameManager : MonoBehaviour
     {
         float shown = metresPerSecond * SpeedoScale;
         return useMph
-            ? Mathf.RoundToInt(shown * 2.23694f) + " MPH"
-            : Mathf.RoundToInt(shown * 3.6f) + " KM/H";
+            ? Loc.F("{0} MPH", Mathf.RoundToInt(shown * 2.23694f))
+            : Loc.F("{0} KM/H", Mathf.RoundToInt(shown * 3.6f));
     }
 
     void ToggleUnits()
@@ -1136,7 +1280,7 @@ public class GameManager : MonoBehaviour
         audioMan.PlayTap();
     }
 
-    string UnitsLabel() { return "SPEED: " + (useMph ? "MPH" : "KM/H"); }
+    string UnitsLabel() { return Loc.F("SPEED: {0}", Loc.T(useMph ? "MPH" : "KM/H")); }
 
     // --------------------------------------------------------------- garage
 
@@ -1194,8 +1338,84 @@ public class GameManager : MonoBehaviour
     Currency pendingBoxCurrency = Currency.Coins;
     float boxRevealAt = -1f;
     bool pendingBoxIsToken;
+    bool pendingBoxTires;        // the prize waiting in the box is tyres
     Material rubberMat;
     Text persistentCoinsText, persistentTiresText;
+    RectTransform coinPillRt, tirePillRt;
+    int shownCoins = int.MinValue, shownTires = int.MinValue;
+
+    // corner counter layout, in canvas units
+    const float CounterEdge = 44f;       // in from the side of the screen
+    const float CounterTop = 14f;        // down from the top
+    const float CounterHeight = 72f;
+    const float CounterIcon = 58f;
+    const float CounterMinWidth = 170f;
+
+    /// <summary>
+    /// A corner counter: a dark pill with the currency's icon at the outer end
+    /// and the amount beside it in big, upright numbers. (The racing font is
+    /// slanted and thin at small sizes, which is what made the old counters
+    /// hard to read, so the numbers use the plain bold font.)
+    /// </summary>
+    Text MakeCornerCounter(Transform parent, bool tire, Color numberColor,
+        out RectTransform pillRt)
+    {
+        Vector2 corner = tire ? new Vector2(1f, 1f) : new Vector2(0f, 1f);
+        Vector2 end = tire ? new Vector2(1f, 0.5f) : new Vector2(0f, 0.5f);
+        float inward = tire ? -1f : 1f;
+
+        var pillGo = new GameObject(tire ? "TireCounter" : "CoinCounter");
+        pillGo.transform.SetParent(parent, false);
+        var pill = pillGo.AddComponent<Image>();
+        pill.sprite = GetRoundedSprite();
+        pill.type = Image.Type.Sliced;
+        pill.color = new Color(0.05f, 0.04f, 0.09f, 0.8f);
+        pill.raycastTarget = false;
+        pillRt = pill.rectTransform;
+        pillRt.anchorMin = pillRt.anchorMax = pillRt.pivot = corner;
+        pillRt.anchoredPosition = new Vector2(inward * CounterEdge, -CounterTop);
+        pillRt.sizeDelta = new Vector2(CounterMinWidth, CounterHeight);
+
+        MakeCurrencyIcon(pillGo.transform, end, new Vector2(inward * 8f, 0f), CounterIcon, tire);
+
+        var number = MakeText(pillGo.transform, tire ? "TotalTires" : "TotalCoins", 50,
+            tire ? TextAnchor.MiddleRight : TextAnchor.MiddleLeft, end,
+            new Vector2(inward * (8f + CounterIcon + 10f), 1f),
+            new Vector2(400f, CounterHeight), true);
+        number.color = numberColor;
+        return number;
+    }
+
+    /// <summary>Updates the corner counters, only when an amount changes.</summary>
+    void RefreshCornerCounters()
+    {
+        if (totalCoins != shownCoins)
+        {
+            shownCoins = totalCoins;
+            persistentCoinsText.text = FormatCount(totalCoins);
+            FitCounterPill(coinPillRt, persistentCoinsText);
+        }
+        if (tires != shownTires)
+        {
+            shownTires = tires;
+            persistentTiresText.text = FormatCount(tires);
+            FitCounterPill(tirePillRt, persistentTiresText);
+        }
+    }
+
+    /// <summary>12345 -> "12,345", the same on every phone.</summary>
+    static string FormatCount(int amount)
+    {
+        return amount.ToString("#,0", System.Globalization.CultureInfo.InvariantCulture);
+    }
+
+    /// <summary>Grows or shrinks a counter's pill to fit its number.</summary>
+    static void FitCounterPill(RectTransform pillRt, Text number)
+    {
+        if (pillRt == null) return;
+        float width = 8f + CounterIcon + 10f + number.preferredWidth + 24f;
+        pillRt.sizeDelta = new Vector2(Mathf.Max(CounterMinWidth, width), CounterHeight);
+    }
     GameObject toolboxRoot, boxPrizeGo;
 
     // static currency icons rendered once from the real 3D models
@@ -1294,9 +1514,9 @@ public class GameManager : MonoBehaviour
     string QuestLine(int i)
     {
         bool isDone = questProgress[i] >= questTarget[i];
-        string line = string.Format(QuestNames[questType[i]], questTarget[i])
+        string line = Loc.F(QuestNames[questType[i]], questTarget[i])
                + "\n<size=24>" + Mathf.Min(questProgress[i], questTarget[i]) + " / " + questTarget[i]
-               + (isDone ? "  DONE!" : "") + "</size>";
+               + (isDone ? "  " + Loc.T("DONE!") : "") + "</size>";
         return isDone ? "<color=#66E28C>" + line + "</color>" : line;
     }
 
@@ -1329,7 +1549,7 @@ public class GameManager : MonoBehaviour
         {
             questLevel = Mathf.Min(questLevel + 1, 29);
             tires += 6;
-            FlashBonus("QUESTS DONE! X" + Mathf.Min(30, 1 + questLevel) + "  +6 TIRES",
+            FlashBonus(Loc.F("QUESTS DONE! X{0}  +6 TIRES", Mathf.Min(30, 1 + questLevel)),
                 new Color(0.6f, 0.9f, 1f));
             audioMan.PlayCoin();
             GenerateQuests();
@@ -1481,11 +1701,11 @@ public class GameManager : MonoBehaviour
     {
         int lv = RaceMode.Level(u);
         string value = u == RaceMode.Upgrade.CoinBonus ? RaceMode.CoinBonusLabel()
-                     : u == RaceMode.Upgrade.Speed ? "+" + Mathf.RoundToInt(RaceMode.SpeedBonus() * SpeedoScale * (useMph ? 2.23694f : 3.6f)) + (useMph ? " MPH" : " KM/H")
+                     : u == RaceMode.Upgrade.Speed ? "+" + Loc.F(useMph ? "{0} MPH" : "{0} KM/H", Mathf.RoundToInt(RaceMode.SpeedBonus() * SpeedoScale * (useMph ? 2.23694f : 3.6f)))
                      : "+" + Mathf.RoundToInt(RaceMode.Strength() * 100f) + "%";
-        string cost = RaceMode.IsMaxed(u) ? "MAX" : RaceMode.CostOf(u).ToString();
+        string cost = RaceMode.IsMaxed(u) ? Loc.T("MAX") : RaceMode.CostOf(u).ToString();
         // the picture carries the meaning, so the text just states the numbers
-        return "<size=17>LV " + lv + "</size>\n<size=16>" + value
+        return "<size=17>" + Loc.F("LV {0}", lv) + "</size>\n<size=16>" + value
                + "</size>\n<size=16>" + cost + "</size>";
     }
 
@@ -1515,7 +1735,7 @@ public class GameManager : MonoBehaviour
             bool unlocked = RaceMode.IsUnlocked(i);
             bool done = RaceMode.IsCompleted(i);
             int stage = RaceMode.StageOf(i) + 1;
-            raceLevelLabels[i].text = unlocked ? (done ? stage + "\n<size=16>WON</size>" : stage.ToString()) : "X";
+            raceLevelLabels[i].text = unlocked ? (done ? stage + "\n<size=16>" + Loc.T("WON") + "</size>" : stage.ToString()) : "X";
             raceLevelLabels[i].color = !unlocked ? new Color(1f, 1f, 1f, 0.35f)
                                      : done ? new Color(0.45f, 1f, 0.55f) : Color.white;
         }
@@ -1815,7 +2035,7 @@ public class GameManager : MonoBehaviour
     void RefreshWheel()
     {
         int left = SpinsLeft;
-        wheelSpinsText.text = left > 0 ? left + "  SPINS LEFT" : "BUY A SPIN BELOW";
+        wheelSpinsText.text = left > 0 ? Loc.F("{0}  SPINS LEFT", left) : Loc.T("BUY A SPIN BELOW");
         wheelSpinLabel.text = left > 0 ? "SPIN" : "NONE LEFT";
         var img = wheelSpinLabel.transform.parent.GetComponent<Image>();
         if (img != null)
@@ -1844,7 +2064,7 @@ public class GameManager : MonoBehaviour
     {
         if (spinMenuLabel == null) return;
         int left = SpinsLeft;
-        spinMenuLabel.text = left > 0 ? "SPIN  " + left : "SPIN";
+        spinMenuLabel.text = left > 0 ? Loc.F("SPIN  {0}", left) : Loc.T("SPIN");
 
         var img = spinMenuLabel.transform.parent.GetComponent<Image>();
         if (img != null)
@@ -2085,13 +2305,13 @@ public class GameManager : MonoBehaviour
             case SpinPrize.Coins:
                 totalCoins += s.amount;
                 PlayerPrefs.SetInt("Coins", totalCoins);
-                msg = "+" + s.amount + " COINS";
+                msg = Loc.F("+{0} COINS", s.amount);
                 break;
 
             case SpinPrize.Tires:
                 tires += s.amount;
                 PlayerPrefs.SetInt("Tires", tires);
-                msg = "+" + s.amount + " TIRES";
+                msg = Loc.F("+{0} TIRES", s.amount);
                 break;
 
             case SpinPrize.Tokens:
@@ -2106,12 +2326,12 @@ public class GameManager : MonoBehaviour
                     int paid = CoinsInsteadOfTokens(s.amount);
                     totalCoins += paid;
                     PlayerPrefs.SetInt("Coins", totalCoins);
-                    msg = "+" + paid + " COINS";
+                    msg = Loc.F("+{0} COINS", paid);
                     col = TokenColors[0];
                     break;
                 }
                 SetToken(cur, GetToken(cur) + s.amount);
-                msg = "+" + s.amount + " " + TokenNames[(int)cur];
+                msg = Loc.F("+{0} {1}", s.amount, Loc.T(TokenNames[(int)cur]));
                 col = TokenColors[(int)cur];
                 break;
             }
@@ -2129,7 +2349,7 @@ public class GameManager : MonoBehaviour
                 else
                 {
                     PlayerPrefs.SetInt("CarOwned" + car, 1);
-                    msg = "JACKPOT!  " + Cars[car].name;
+                    msg = Loc.F("JACKPOT!  {0}", Cars[car].name);
                 }
                 break;
             }
@@ -2138,7 +2358,7 @@ public class GameManager : MonoBehaviour
         PlayerPrefs.Save();
         wheelResultText.text = msg;
         wheelResultText.color = col;
-        menuCoinsText.text = "COINS  " + totalCoins;
+        menuCoinsText.text = Loc.F("COINS  {0}", totalCoins);
         // the wheel gets the same full-screen celebration as the boxes
         ShowPrizeReveal(msg, s.kind == SpinPrize.Tokens, WheelIconPath(s));
     }
@@ -2337,8 +2557,8 @@ public class GameManager : MonoBehaviour
             new Vector2(140f, -520f), new Vector2(260f, 104f), WatchAdForSpin,
             new Color(0.30f, 0.62f, 0.35f));
 
-        MakeButton(wheelPanel.transform, "BACK", 44,
-            new Vector2(0f, -650f), new Vector2(420f, 100f), CloseWheel);
+        // clear of the +1 / WATCH AD pair, which end at -572
+        MakeCloseButton(wheelPanel.transform, new Vector2(0f, -690f), CloseWheel);
 
         wheelPanel.SetActive(false);
     }
@@ -2460,7 +2680,9 @@ public class GameManager : MonoBehaviour
 
     static string Ordinal(int place)
     {
-        return place == 1 ? "st" : place == 2 ? "nd" : place == 3 ? "rd" : "th";
+        // each language's own ending (French 1er/2e, Japanese 1位 ...),
+        // and some languages have none
+        return Loc.T(place == 1 ? "ORD 1" : place == 2 ? "ORD 2" : place == 3 ? "ORD 3" : "ORD N");
     }
 
     /// <summary>
@@ -2561,8 +2783,8 @@ public class GameManager : MonoBehaviour
 
         float togo = Mathf.Max(0f, raceFinishDistance - car.DistanceTraveled);
         int place = race.PlayerPlace(car.DistanceTraveled);
-        raceHudText.text = "P" + place + "/" + (RaceMode.Opponents + 1)
-                           + "\n<size=24>" + Mathf.RoundToInt(togo) + "M</size>";
+        raceHudText.text = Loc.F("P{0}/{1}", place, RaceMode.Opponents + 1)
+                           + "\n<size=24>" + Loc.F("{0}M", Mathf.RoundToInt(togo)) + "</size>";
 
         UpdateFinishTension();
         if (car.DistanceTraveled >= raceFinishDistance) FinishRace(place);
@@ -2584,9 +2806,9 @@ public class GameManager : MonoBehaviour
 
         state = State.GameOver;
         PlayFinishCinematic(place);
-        centerText.text = (place == 1 ? "WINNER!" : "FINISHED P" + place) +
-            "\n<size=30>" + (place == 1 ? "NEXT RACE UNLOCKED" : "1ST PLACE UNLOCKS THE NEXT RACE") + "</size>" +
-            (reward > 0 ? "\n<size=34>+" + reward + " COINS</size>" : "");
+        centerText.text = (place == 1 ? Loc.T("WINNER!") : Loc.F("FINISHED P{0}", place)) +
+            "\n<size=30>" + Loc.T(place == 1 ? "NEXT RACE UNLOCKED" : "1ST PLACE UNLOCKS THE NEXT RACE") + "</size>" +
+            (reward > 0 ? "\n<size=34>" + Loc.F("+{0} COINS", reward) + "</size>" : "");
         // the result screen waits for the cinematic to play out
         centerText.gameObject.SetActive(false);
         gameOverPanel.SetActive(false);
@@ -2884,7 +3106,7 @@ public class GameManager : MonoBehaviour
 
         unlockMsg.color = new Color(0.45f, 1f, 0.55f);
         unlockMsg.text = "ALL CARS + RACES UNLOCKED";
-        menuCoinsText.text = "COINS  " + totalCoins;
+        menuCoinsText.text = Loc.F("COINS  {0}", totalCoins);
         audioMan.PlayCoin();
         Invoke(nameof(CloseUnlockPrompt), 1.1f);
     }
@@ -2907,8 +3129,8 @@ public class GameManager : MonoBehaviour
     {
         menuPanel.SetActive(false);
         questsPanel.SetActive(true);
-        questMultText.text = "SCORE MULTIPLIER  X" + Mathf.Min(30, 1 + questLevel);
-        questTiresText.text = "TIRES  " + tires;
+        questMultText.text = Loc.F("SCORE MULTIPLIER  X{0}", Mathf.Min(30, 1 + questLevel));
+        questTiresText.text = Loc.F("TIRES  {0}", tires);
         for (int i = 0; i < 3; i++) questRowTexts[i].text = QuestLine(i);
         audioMan.PlayTap();
     }
@@ -3207,15 +3429,15 @@ public class GameManager : MonoBehaviour
         shopPanel.SetActive(false);
         if (shopShowcaseRoot != null) shopShowcaseRoot.SetActive(false);
         menuPanel.SetActive(true);
-        menuCoinsText.text = "COINS  " + totalCoins;
+        menuCoinsText.text = Loc.F("COINS  {0}", totalCoins);
         PlayerPrefs.Save();
         audioMan.PlayTap();
     }
 
     void RefreshShopCurrency()
     {
-        storeCoinsText.text = "COINS  " + totalCoins;
-        storeTiresText.text = "TIRES  " + tires;
+        storeCoinsText.text = Loc.F("COINS  {0}", totalCoins);
+        storeTiresText.text = Loc.F("TIRES  {0}", tires);
         RefreshItemUpgrades();
     }
 
@@ -3230,11 +3452,11 @@ public class GameManager : MonoBehaviour
             bool maxed = ItemUpgrades.IsMaxed(i);
 
             itemUpNames[i].text = ItemUpgrades.Names[i];
-            itemUpInfo[i].text = "LV " + (level + 1) + "/7   "
-                               + ItemUpgrades.Seconds(i).ToString("0.#") + "s"
+            itemUpInfo[i].text = Loc.F("LV {0}/7", level + 1) + "   "
+                               + Loc.F("{0}s", ItemUpgrades.Seconds(i).ToString("0.#"))
                                + (maxed ? ""
-                                  : "  >  " + ItemUpgrades.SecondsAtLevel(i, level + 1)
-                                        .ToString("0.#") + "s");
+                                  : "  >  " + Loc.F("{0}s", ItemUpgrades.SecondsAtLevel(i, level + 1)
+                                        .ToString("0.#")));
 
             int cost = ItemUpgrades.Cost(i);
             itemUpButtons[i].text = maxed ? "MAX" : cost.ToString();
@@ -3271,8 +3493,8 @@ public class GameManager : MonoBehaviour
         PlayerPrefs.SetInt("Coins", totalCoins);
         ItemUpgrades.Buy(item);
 
-        boxResultText.text = ItemUpgrades.Names[item] + "  LV "
-                           + (ItemUpgrades.Level(item) + 1);
+        boxResultText.text = Loc.T(ItemUpgrades.Names[item]) + "  "
+                           + Loc.F("LV {0}", ItemUpgrades.Level(item) + 1);
         boxResultText.color = new Color(0.6f, 1f, 0.7f);
         audioMan.PlayPowerUp();
         RefreshShopCurrency();
@@ -3289,6 +3511,7 @@ public class GameManager : MonoBehaviour
         }
         totalCoins -= MysteryBoxCost;
         pendingBoxCurrency = Currency.Coins;
+        pendingBoxTires = false;
 
         // rarity table - TODO: add car skins as prizes when new skins exist
         float roll = Random.value;
@@ -3296,35 +3519,37 @@ public class GameManager : MonoBehaviour
         {
             int c = Random.Range(200, 451);
             totalCoins += c;
-            pendingBoxText = "+" + c + " COINS";
+            pendingBoxText = Loc.F("+{0} COINS", c);
             pendingBoxColor = new Color(1f, 0.82f, 0.1f);
         }
         else if (roll < 0.70f)
         {
             int c = Random.Range(500, 901);
             totalCoins += c;
-            pendingBoxText = "+" + c + " COINS!";
+            pendingBoxText = Loc.F("+{0} COINS!", c);
             pendingBoxColor = new Color(1f, 0.82f, 0.1f);
         }
         else if (roll < 0.85f)
         {
             int t = Random.Range(1, 4);
             tires += t;
-            pendingBoxText = "+" + t + " TIRES!";
+            pendingBoxText = Loc.F("+{0} TIRES!", t);
+            pendingBoxTires = true;
             pendingBoxColor = new Color(0.7f, 0.9f, 1f);
         }
         else if (roll < 0.95f)
         {
             int c = Random.Range(1200, 2001);
             totalCoins += c;
-            pendingBoxText = "RARE!  +" + c + " COINS!";
+            pendingBoxText = Loc.F("RARE!  +{0} COINS!", c);
             pendingBoxColor = new Color(0.8f, 0.4f, 1f);
         }
         else if (roll < 0.98f)
         {
             int t = Random.Range(5, 9);
             tires += t;
-            pendingBoxText = "JACKPOT!  +" + t + " TIRES!";
+            pendingBoxText = Loc.F("JACKPOT!  +{0} TIRES!", t);
+            pendingBoxTires = true;
             pendingBoxColor = new Color(0.35f, 1f, 0.45f);
         }
         else
@@ -3333,7 +3558,7 @@ public class GameManager : MonoBehaviour
             pendingBoxCurrency = (Currency)Random.Range(1, 5);
             int amount = Random.Range(1, 6);
             SetToken(pendingBoxCurrency, GetToken(pendingBoxCurrency) + amount);
-            pendingBoxText = "+" + amount + " " + TokenNames[(int)pendingBoxCurrency] + "!";
+            pendingBoxText = Loc.F("+{0} {1}!", amount, Loc.T(TokenNames[(int)pendingBoxCurrency]));
             pendingBoxColor = TokenColors[(int)pendingBoxCurrency];
         }
 
@@ -3344,7 +3569,7 @@ public class GameManager : MonoBehaviour
         // spawn the actual prize model inside the box so it rises out
         if (boxPrizeGo != null) Destroy(boxPrizeGo);
         pendingBoxIsToken = false;
-        bool prizeTires = pendingBoxText.Contains("TIRE");
+        bool prizeTires = pendingBoxTires;
         bool prizeToken = pendingBoxCurrency != Currency.Coins && !prizeTires;
         Vector3 inBox = toolboxRoot.transform.position + Vector3.up * 0.25f;
         boxPrizeGo = prizeToken
@@ -3490,8 +3715,12 @@ public class GameManager : MonoBehaviour
             target.color = pendingBoxColor;
             RefreshShopCurrency();
             audioMan.PlayCoin();
-            ShowPrizeReveal(pendingBoxText, pendingBoxIsToken,
-                pendingBoxIsToken ? TokenIcons[(int)pendingBoxCurrency] : null);
+            // which prize it was is known here - it is not read back out of
+            // the message, which is only English in English
+            bool tokenPrize = pendingBoxCurrency != Currency.Coins;
+            ShowPrizeReveal(pendingBoxText, tokenPrize,
+                tokenPrize ? TokenIcons[(int)pendingBoxCurrency]
+                : pendingBoxTires ? TireIconPath : CoinIconPath);
         }
         TickBoxFocus();
         TickPrizeReveal();
@@ -3591,17 +3820,10 @@ public class GameManager : MonoBehaviour
     {
         if (revealPanel == null) return;
 
-        bool tires = text.Contains("TIRE");
-        bool token = text.Contains("TOKEN");
-        bool car = text.Contains("CAR");
-
-        // the caller can name the exact emblem it just awarded; otherwise the
-        // prize is worked out from the message
-        if (string.IsNullOrEmpty(iconPath))
-        {
-            iconPath = car ? "UI/wheel_car" : token ? "UI/wheel_token"
-                     : tires ? "UI/wheel_tires" : "UI/wheel_coins";
-        }
+        // the caller names the emblem it just awarded - the message itself
+        // cannot be read for it, as it is in the player's language
+        if (string.IsNullOrEmpty(iconPath)) iconPath = CoinIconPath;
+        bool token = tokenBox;
         revealIcon.texture = Resources.Load<Texture2D>(iconPath);
 
         // token boxes get the cool blue treatment, coin boxes the gold one
@@ -3707,16 +3929,17 @@ public class GameManager : MonoBehaviour
             int paid = CoinsInsteadOfTokens(amount);
             totalCoins += paid;
             PlayerPrefs.SetInt("Coins", totalCoins);
-            pendingBoxText = "+" + paid + " COINS";
+            pendingBoxText = Loc.F("+{0} COINS", paid);
         }
         else
         {
             SetToken(cur, GetToken(cur) + amount);
-            pendingBoxText = "+" + amount + " " + TokenNames[(int)cur];
+            pendingBoxText = Loc.F("+{0} {1}", amount, Loc.T(TokenNames[(int)cur]));
         }
 
         pendingBoxCurrency = cur;
         pendingBoxIsToken = cur != Currency.Coins;
+        pendingBoxTires = false;
         pendingBoxColor = TokenColors[(int)cur];
 
         // spawn the token model inside the blue box so it rises out
@@ -3749,7 +3972,7 @@ public class GameManager : MonoBehaviour
         PlayerPrefs.SetInt("Coins", totalCoins);
         PlayerPrefs.SetInt("Tires", tires);
         PlayerPrefs.Save();
-        boxResultText.text = "+" + coinsGained + " COINS";
+        boxResultText.text = Loc.F("+{0} COINS", coinsGained);
         boxResultText.color = new Color(1f, 0.82f, 0.1f);
         RefreshShopCurrency();
         audioMan.PlayCoin();
@@ -3762,7 +3985,7 @@ public class GameManager : MonoBehaviour
         tires += amount;
         PlayerPrefs.SetInt("Tires", tires);
         PlayerPrefs.Save();
-        boxResultText.text = "+" + amount + " TIRES!";
+        boxResultText.text = Loc.F("+{0} TIRES!", amount);
         boxResultText.color = new Color(0.7f, 0.9f, 1f);
         RefreshShopCurrency();
         audioMan.PlayCoin();
@@ -4167,7 +4390,7 @@ public class GameManager : MonoBehaviour
         ClearGaragePreview();
         FinishCarSwapNow();   // never leave the garage mid-changeover
         menuPanel.SetActive(true);
-        menuCoinsText.text = "COINS  " + totalCoins;
+        menuCoinsText.text = Loc.F("COINS  {0}", totalCoins);
         PlayerPrefs.Save();
         audioMan.PlayTap();
     }
@@ -4468,8 +4691,8 @@ public class GameManager : MonoBehaviour
 
         // show the currency this car actually costs
         shopCoinsText.text = d.currency == Currency.Coins || owned
-            ? "COINS  " + totalCoins
-            : GetToken(d.currency) + "  " + TokenNames[(int)d.currency];
+            ? Loc.F("COINS  {0}", totalCoins)
+            : GetToken(d.currency) + "  " + Loc.T(TokenNames[(int)d.currency]);
         shopCoinsText.color = owned ? TokenColors[0] : TokenColors[(int)d.currency];
         shopCarName.text = d.name;
         shopStats.text = ""; // cars are skins - no stats to show
@@ -4493,7 +4716,7 @@ public class GameManager : MonoBehaviour
         {
             shopPrice.text = d.iapPrice;
             shopPrice.color = new Color(0.5f, 1f, 0.6f);
-            shopActionLabel.text = "BUY " + d.iapPrice;
+            shopActionLabel.text = Loc.F("BUY {0}", d.iapPrice);
             garagePriceIcon.gameObject.SetActive(false);
         }
         else if (d.cost < 0)
@@ -4554,7 +4777,7 @@ public class GameManager : MonoBehaviour
             int wallet = GetToken(d.currency);
             if (wallet < d.cost)
             {
-                shopPrice.text = "NOT ENOUGH " + TokenNames[(int)d.currency];
+                shopPrice.text = Loc.F("NOT ENOUGH {0}", Loc.T(TokenNames[(int)d.currency]));
                 shopPrice.color = new Color(1f, 0.35f, 0.3f);
                 audioMan.PlayTap();
                 return;
@@ -4579,6 +4802,10 @@ public class GameManager : MonoBehaviour
     void OpenSettings()
     {
         settingsFromPause = state == State.Paused;
+        // changing language rebuilds the menu, so it is offered from the
+        // menu only - never in the middle of a run
+        if (languageBtnLabel != null)
+            languageBtnLabel.transform.parent.gameObject.SetActive(!settingsFromPause);
         if (settingsFromPause) pausePanel.SetActive(false);
         else menuPanel.SetActive(false);
         settingsPanel.SetActive(true);
@@ -4758,14 +4985,14 @@ public class GameManager : MonoBehaviour
         bool canTires = tires >= ReviveTireCost;
         // short and plain - this is read in a hurry, against a five second clock
         reviveTireLabel.text = canTires
-            ? "REVIVE   " + ReviveTireCost
-            : "NEED   " + ReviveTireCost;
+            ? Loc.F("REVIVE   {0}", ReviveTireCost)
+            : Loc.F("NEED   {0}", ReviveTireCost);
         reviveTireLabel.color = canTires ? Color.white : new Color(1f, 0.55f, 0.5f);
-        reviveHaveText.text = "YOU HAVE " + tires;
+        reviveHaveText.text = Loc.F("YOU HAVE {0}", tires);
         reviveAdPending = false;
         bool canAd = adRevivesUsed < 5;
         reviveAdLabel.text = canAd
-            ? "WATCH AD (" + (5 - adRevivesUsed) + " LEFT)"
+            ? Loc.F("WATCH AD ({0} LEFT)", 5 - adRevivesUsed)
             : "NO AD REVIVES LEFT";
         reviveTimer = reviveDecisionTime;
         reviveTimerText.text = Mathf.CeilToInt(reviveTimer).ToString();
@@ -5049,11 +5276,7 @@ public class GameManager : MonoBehaviour
         TickBoxReveal();
 
         // corner currency counters stay current in every state
-        if (persistentCoinsText != null)
-        {
-            persistentCoinsText.text = totalCoins.ToString();
-            persistentTiresText.text = tires.ToString();
-        }
+        if (persistentCoinsText != null) RefreshCornerCounters();
 
 
         switch (state)
@@ -5151,7 +5374,7 @@ public class GameManager : MonoBehaviour
                 c = Color.Lerp(c, Color.white, Mathf.PingPong(Time.time * 5f, 1f) * 0.6f);
             }
             itemBarFills[slot].color = c;
-            itemBarLabels[slot].text = ItemNames[i] + "   " + Mathf.CeilToInt(remaining[i]);
+            itemBarLabels[slot].text = Loc.T(ItemNames[i]) + "   " + Mathf.CeilToInt(remaining[i]);
             slot++;
         }
 
@@ -5293,7 +5516,7 @@ public class GameManager : MonoBehaviour
             score += banked;
             if (banked >= DriftFlashMin)
             {
-                FlashBonus("+" + banked + " DRIFT COMBO", new Color(0.35f, 0.85f, 1f));
+                FlashBonus(Loc.F("+{0} DRIFT COMBO", banked), new Color(0.35f, 0.85f, 1f));
                 // A token surge only. This used to be worth up to 3 m/s, and
                 // with combos banking constantly it was quietly acting as a
                 // second accelerator on top of the ramp - the car reached its
@@ -5310,7 +5533,7 @@ public class GameManager : MonoBehaviour
         {
             int bonus = Mathf.RoundToInt(nearMisses * nearMissBonus * carPointMult) * ScoreMultiplier;
             score += bonus;
-            FlashBonus("+" + bonus + " NEAR MISS", new Color(0.4f, 1f, 0.5f));
+            FlashBonus(Loc.F("+{0} NEAR MISS", bonus), new Color(0.4f, 1f, 0.5f));
             audioMan.PlayNearMiss();
             UpdateQuest(4, nearMisses, false);
         }
@@ -5347,9 +5570,9 @@ public class GameManager : MonoBehaviour
     void UpdateHud()
     {
         scoreText.text = Mathf.RoundToInt(score).ToString();
-        bestText.text = "BEST " + best;
+        bestText.text = Loc.F("BEST  {0}", best);
         speedText.text = SpeedLabel(car.CurrentSpeed);
-        coinHudText.text = "RUN COINS " + coinsThisRun;
+        coinHudText.text = Loc.F("RUN COINS {0}", coinsThisRun);
         multHudText.text = "X" + ScoreMultiplier;
 
         UpdateItemBars();
@@ -5360,7 +5583,7 @@ public class GameManager : MonoBehaviour
         if (showDrift && mainCam != null)
         {
             int mult = DriftMultiplier();
-            driftText.text = "DRIFT X" + mult + " +" + Mathf.RoundToInt(pendingDrift);
+            driftText.text = Loc.F("DRIFT X{0}", mult) + " +" + Mathf.RoundToInt(pendingDrift);
             driftText.color = Color.Lerp(Color.white, new Color(1f, 0.45f, 0.1f), (mult - 1) / 7f);
 
             Vector3 sp = mainCam.WorldToScreenPoint(car.transform.position + Vector3.up * 1.4f);
@@ -5447,15 +5670,12 @@ public class GameManager : MonoBehaviour
         speedText = MakeText(uiRoot, "Speed", 40, TextAnchor.UpperRight,
             new Vector2(1f, 1f), new Vector2(-40f, -196f), new Vector2(400f, 60f));
 
-        // always-visible currency counters with model icons, one per top corner
-        MakeCurrencyIcon(uiRoot, new Vector2(0f, 1f), new Vector2(62f, -10f), 52f, false);
-        persistentCoinsText = MakeText(uiRoot, "TotalCoins", 38, TextAnchor.UpperLeft,
-            new Vector2(0f, 1f), new Vector2(124f, -28f), new Vector2(400f, 55f));
-        persistentCoinsText.color = new Color(1f, 0.82f, 0.1f);
-        MakeCurrencyIcon(uiRoot, new Vector2(1f, 1f), new Vector2(-62f, -12f), 52f, true);
-        persistentTiresText = MakeText(uiRoot, "TotalTires", 38, TextAnchor.UpperRight,
-            new Vector2(1f, 1f), new Vector2(-124f, -28f), new Vector2(400f, 55f));
-        persistentTiresText.color = new Color(1f, 0.34f, 0.30f);
+        // always-visible currency counters, one per top corner, each on its
+        // own dark pill so it reads over the bright sky and road behind it
+        persistentCoinsText = MakeCornerCounter(uiRoot, false,
+            new Color(1f, 0.85f, 0.25f), out coinPillRt);
+        persistentTiresText = MakeCornerCounter(uiRoot, true,
+            new Color(1f, 0.68f, 0.62f), out tirePillRt);
 
         // pause button, top-right (below the tire counter)
         var pauseLabel = MakeButton(uiRoot, "PAUSE", 30,
@@ -5549,6 +5769,7 @@ public class GameManager : MonoBehaviour
         var title = MakeText(menuPanel.transform, "Title", 96, TextAnchor.MiddleCenter,
             new Vector2(0.5f, 0.5f), new Vector2(0f, 420f), new Vector2(1040f, 150f));
         title.text = "DRIFTLINE";
+        KeepGameFont(title, 96);
         menuTitle = title;
         title.color = new Color(1f, 0.72f, 0.12f); // sunny arcade orange
         title.transform.localRotation = Quaternion.Euler(0f, 0f, 2.5f); // playful tilt
@@ -5557,6 +5778,7 @@ public class GameManager : MonoBehaviour
         menuSubTitle = MakeText(menuPanel.transform, "TitleSub", 50, TextAnchor.MiddleCenter,
             new Vector2(0.5f, 0.5f), new Vector2(0f, 345f), new Vector2(1040f, 80f));
         menuSubTitle.text = "ETERNAL";
+        KeepGameFont(menuSubTitle, 50);
         menuSubTitle.color = new Color(1f, 0.86f, 0.45f);
         menuSubTitle.transform.localRotation = Quaternion.Euler(0f, 0f, 2.5f);
         // hidden dev unlock: tap the title 15 times for a password prompt.
@@ -5586,26 +5808,36 @@ public class GameManager : MonoBehaviour
         version.text = GameVersion;
         version.color = new Color(1f, 1f, 1f, 0.28f);
 
+        // RACES is the second big button, straight under PLAY, on a
+        // chequered flag
+        MakeRaceButton(menuPanel.transform, new Vector2(0f, -137f),
+            new Vector2(600f, 140f));
+
         const float ColX = 152f;
-        const float RowTop = -150f;
+        const float RowTop = -289f;
         const float RowStep = 128f;
         Vector2 small = new Vector2(292f, 112f);
+        // the game's own lettering is wide, so it is set smaller than the
+        // other scripts' fonts to sit in these buttons with room to spare
+        int smallText = Loc.DisplayFontFor(Loc.Current) == null ? 38 : 44;
 
-        spinMenuLabel = MakeButton(menuPanel.transform, "SPIN", 34,
+        spinMenuLabel = MakeButton(menuPanel.transform, "SPIN", smallText,
             new Vector2(-ColX, RowTop), small, OpenWheel,
             new Color(1f, 0.78f, 0.12f));
-        MakeButton(menuPanel.transform, "RACES", 34,
-            new Vector2(ColX, RowTop), small, OpenRaces);
+        MakeButton(menuPanel.transform, "GARAGE", smallText,
+            new Vector2(ColX, RowTop), small, OpenGarage);
 
-        MakeButton(menuPanel.transform, "GARAGE", 34,
-            new Vector2(-ColX, RowTop - RowStep), small, OpenGarage);
-        MakeButton(menuPanel.transform, "SHOP", 34,
-            new Vector2(ColX, RowTop - RowStep), small, OpenShop);
+        MakeButton(menuPanel.transform, "SHOP", smallText,
+            new Vector2(-ColX, RowTop - RowStep), small, OpenShop);
+        MakeButton(menuPanel.transform, "QUESTS", smallText,
+            new Vector2(ColX, RowTop - RowStep), small, OpenQuests);
 
-        MakeButton(menuPanel.transform, "QUESTS", 34,
-            new Vector2(-ColX, RowTop - RowStep * 2f), small, OpenQuests);
-        MakeButton(menuPanel.transform, "SETTINGS", 34,
-            new Vector2(ColX, RowTop - RowStep * 2f), small, OpenSettings);
+        // settings: a gear in the bottom-left corner, mirroring the version
+        // number in the bottom-right (and brought back in by the panel's
+        // overspill the same way)
+        MakeIconButton(menuPanel.transform, SettingsIconPath, "SETTINGS",
+            new Vector2(0f, 0f), new Vector2(40f + PanelBleed.x, 34f + PanelBleed.y),
+            new Vector2(128f, 128f), OpenSettings);
         var hint = MakeText(menuPanel.transform, "Hint", 30, TextAnchor.MiddleCenter,
             new Vector2(0.5f, 0.5f), new Vector2(0f, -560f), new Vector2(900f, 60f));
         hint.text = "SLIDE THUMB TO STEER";
@@ -5647,6 +5879,10 @@ public class GameManager : MonoBehaviour
             new Vector2(0f, 170f), new Vector2(640f, 100f), ToggleInvert);
         unitsBtnLabel = MakeButton(settingsGeneralTab.transform, UnitsLabel(), 38,
             new Vector2(0f, 40f), new Vector2(640f, 100f), ToggleUnits);
+        languageBtnLabel = MakeButton(settingsGeneralTab.transform,
+            Loc.F("LANGUAGE: {0}", Loc.NativeName(Loc.Current)), 38,
+            new Vector2(0f, -90f), new Vector2(640f, 100f), OpenLanguages);
+        BuildLanguagePanel(uiRoot);
 
         // --- credits
         var credLine = MakeText(settingsCreditsTab.transform, "CreditsBody", 28,
@@ -5658,8 +5894,8 @@ public class GameManager : MonoBehaviour
 
         SetSettingsTab(0);
 
-        MakeButton(settingsPanel.transform, "BACK", 44,
-            new Vector2(0f, -720f), new Vector2(560f, 110f), CloseSettings);
+        // inside the card (it ends at -760), well under the last slider
+        MakeCloseButton(settingsPanel.transform, new Vector2(0f, -645f), CloseSettings);
 
         // --- credits
         creditsPanel = MakePanel(uiRoot, "CreditsPanel");
@@ -5679,13 +5915,8 @@ public class GameManager : MonoBehaviour
         cBody.color = new Color(1f, 1f, 1f, 0.92f);
         cBody.lineSpacing = 1.15f;
 
-        var credBackLabel = MakeButton(creditsPanel.transform, "BACK", 44,
-            Vector2.zero, new Vector2(560f, 110f), CloseCredits);
-        var credBackRt = credBackLabel.transform.parent.GetComponent<RectTransform>();
-        credBackRt.anchorMin = credBackRt.anchorMax = credBackRt.pivot = new Vector2(0.5f, 0f);
-        // panels now bleed past the safe area, so bottom-anchored buttons have
-        // to come back up by the same amount to sit where they used to
-        credBackRt.anchoredPosition = new Vector2(0f, 30f + PanelBleed.y);
+        // at the foot of the card itself (it ends at -640)
+        MakeCloseButton(credScroll, new Vector2(0f, -525f), CloseCredits);
 
         // --- garage / car shop
         garagePanel = MakePanel(uiRoot, "GaragePanel");
@@ -5751,12 +5982,12 @@ public class GameManager : MonoBehaviour
             new Vector2(-235f, -250f), 52f, false);
         shopActionLabel = MakeButton(garageCarsTab.transform, "BUY", 48,
             new Vector2(0f, -370f), new Vector2(480f, 120f), ShopAction);
-        MakeButton(garagePanel.transform, "BACK", 44,
-            new Vector2(0f, -520f), new Vector2(560f, 110f), CloseGarage);
+        // below the BUY button and below the paint tab's last row of swatches
+        MakeCloseButton(garagePanel.transform, new Vector2(0f, -600f), CloseGarage);
 
         // --- pause menu
         pausePanel = MakePanel(uiRoot, "PausePanel");
-        MakeCard(pausePanel.transform, new Vector2(0f, 10f), new Vector2(950f, 1090f),
+        MakeCard(pausePanel.transform, new Vector2(0f, 105f), new Vector2(950f, 900f),
             new Color(0.13f, 0.09f, 0.2f, 0.92f));
         var pTitle = MakeText(pausePanel.transform, "PauseTitle", 84, TextAnchor.MiddleCenter,
             new Vector2(0.5f, 0.5f), new Vector2(0f, 430f), new Vector2(800f, 120f));
@@ -5773,10 +6004,12 @@ public class GameManager : MonoBehaviour
         pauseQuestText.lineSpacing = 1.25f;
         MakeButton(pausePanel.transform, "RESUME", 56,
             new Vector2(0f, -40f), new Vector2(560f, 140f), ResumeGame);
-        MakeButton(pausePanel.transform, "SETTINGS", 44,
-            new Vector2(0f, -220f), new Vector2(560f, 110f), OpenSettings);
         MakeButton(pausePanel.transform, "MENU", 40,
-            new Vector2(0f, -370f), new Vector2(560f, 100f), QuitToMenu);
+            new Vector2(0f, -220f), new Vector2(560f, 100f), QuitToMenu);
+        // settings: the same gear as the menu's, in the same corner
+        MakeIconButton(pausePanel.transform, SettingsIconPath, "SETTINGS",
+            new Vector2(0f, 0f), new Vector2(40f + PanelBleed.x, 34f + PanelBleed.y),
+            new Vector2(128f, 128f), OpenSettings);
 
         // --- daily login reward popup
         loginPanel = MakePanel(uiRoot, "LoginPanel");
@@ -5820,7 +6053,7 @@ public class GameManager : MonoBehaviour
 
             var dayLabel = MakeText(cell.transform, "Day", 22, TextAnchor.MiddleCenter,
                 new Vector2(0.5f, 0.5f), new Vector2(0f, 72f), new Vector2(135f, 40f));
-            dayLabel.text = "DAY " + (i + 1);
+            dayLabel.text = Loc.F("DAY {0}", i + 1);
 
             var iconGo = new GameObject("Icon");
             iconGo.transform.SetParent(cell.transform, false);
@@ -5857,9 +6090,11 @@ public class GameManager : MonoBehaviour
 
         // --- race level select: 4 biomes x 5 levels
         racePanel = MakePanel(uiRoot, "RacePanel");
-        Transform raceScroll = MakeScrollArea(racePanel, 2100f);
-        MakeCard(raceScroll, new Vector2(0f, -100f), new Vector2(1010f, 1980f),
-            new Color(0.13f, 0.09f, 0.2f, 0.93f));
+        // content runs from +1050 down to -930, 90 under the last row of
+        // levels; the card carries on past the end so it runs into the footer
+        Color raceWindow = new Color(0.13f, 0.09f, 0.2f, 0.93f);
+        Transform raceScroll = MakeScrollArea(racePanel, 1980f, 60f);
+        MakeCard(raceScroll, new Vector2(0f, -60f), new Vector2(1010f, 1900f), raceWindow);
         var rTitle2 = MakeText(raceScroll, "RaceTitle", 80, TextAnchor.MiddleCenter,
             new Vector2(0.5f, 0.5f), new Vector2(0f, 800f), new Vector2(900f, 110f));
         rTitle2.text = "RACES";
@@ -5913,11 +6148,7 @@ public class GameManager : MonoBehaviour
                 raceLevelLabels[level] = lbl;
             }
         }
-        var raceBackLabel = MakeButton(racePanel.transform, "BACK", 44,
-            Vector2.zero, new Vector2(560f, 110f), CloseRaces);
-        var raceBackRt = raceBackLabel.transform.parent.GetComponent<RectTransform>();
-        raceBackRt.anchorMin = raceBackRt.anchorMax = raceBackRt.pivot = new Vector2(0.5f, 0f);
-        raceBackRt.anchoredPosition = new Vector2(0f, 30f + PanelBleed.y);
+        MakeScrollFooter(racePanel, raceWindow, CloseRaces);
 
         // race HUD: position and distance remaining
         raceHudText = MakeText(uiRoot, "RaceHud", 76, TextAnchor.UpperCenter,
@@ -5952,18 +6183,19 @@ public class GameManager : MonoBehaviour
             questRowTexts[i].lineSpacing = 1.25f;
         }
         var qpHint = MakeText(questsPanel.transform, "QPHint", 26, TextAnchor.MiddleCenter,
-            new Vector2(0.5f, 0.5f), new Vector2(0f, -450f), new Vector2(920f, 60f));
+            new Vector2(0.5f, 0.5f), new Vector2(0f, -400f), new Vector2(920f, 60f));
         qpHint.text = "COMPLETE ALL 3\n+1 MULTIPLIER   +6 TIRES";
         qpHint.color = new Color(1f, 1f, 1f, 0.6f);
-        MakeButton(questsPanel.transform, "BACK", 44,
-            new Vector2(0f, -560f), new Vector2(560f, 110f), CloseQuests);
+        // inside the card (it ends at -645), under the hint
+        MakeCloseButton(questsPanel.transform, new Vector2(0f, -530f), CloseQuests);
 
         // --- shop (tires for money, mystery boxes for coins)
         shopPanel = MakePanel(uiRoot, "ShopPanel");
         // content runs from about +700 (title) down to -2150 (last upgrade row)
+        Color shopWindow = new Color(0.13f, 0.09f, 0.2f, 0.92f);
         Transform shopScroll = MakeScrollArea(shopPanel, 2900f, -725f);
-        MakeCard(shopScroll, new Vector2(0f, -725f), new Vector2(1010f, 2880f),
-            new Color(0.13f, 0.09f, 0.2f, 0.92f));
+        // carries on past the end of the content so it runs into the footer
+        MakeCard(shopScroll, new Vector2(0f, -770f), new Vector2(1010f, 2970f), shopWindow);
         var shTitle = MakeText(shopScroll, "ShopTitle", 84, TextAnchor.MiddleCenter,
             new Vector2(0.5f, 0.5f), new Vector2(0f, 640f), new Vector2(800f, 120f));
         shTitle.text = "SHOP";
@@ -5989,7 +6221,7 @@ public class GameManager : MonoBehaviour
         tbRt.anchoredPosition = new Vector2(0f, 285f);
         tbRt.sizeDelta = new Vector2(290f, 290f);
 
-        var boxBtnLabel = MakeButton(shopScroll, "OPEN BOX  " + MysteryBoxCost, 34,
+        var boxBtnLabel = MakeButton(shopScroll, Loc.F("OPEN BOX  {0}", MysteryBoxCost), 34,
             new Vector2(0f, 90f), new Vector2(700f, 110f), BuyMysteryBox, null, true);
         MakeCurrencyIcon(boxBtnLabel.transform.parent, new Vector2(0.5f, 0.5f),
             new Vector2(196f, 0f), 55f, false);
@@ -6011,7 +6243,7 @@ public class GameManager : MonoBehaviour
         tb2Rt.anchoredPosition = new Vector2(0f, -265f);
         tb2Rt.sizeDelta = new Vector2(255f, 255f);
 
-        var tokBtn = MakeButton(shopScroll, "OPEN  " + TokenBoxTireCost, 34,
+        var tokBtn = MakeButton(shopScroll, Loc.F("OPEN  {0}", TokenBoxTireCost), 34,
             new Vector2(0f, -430f), new Vector2(700f, 110f), BuyTokenBox,
             new Color(0.16f, 0.45f, 0.9f), true);
         MakeCurrencyIcon(tokBtn.transform.parent, new Vector2(0.5f, 0.5f),
@@ -6114,11 +6346,7 @@ public class GameManager : MonoBehaviour
             itemUpButtons[i].rectTransform.anchoredPosition = new Vector2(28f, 0f);
         }
 
-        var shopBackLabel = MakeButton(shopPanel.transform, "BACK", 44,
-            Vector2.zero, new Vector2(560f, 110f), CloseShop);
-        var shopBackRt = shopBackLabel.transform.parent.GetComponent<RectTransform>();
-        shopBackRt.anchorMin = shopBackRt.anchorMax = shopBackRt.pivot = new Vector2(0.5f, 0f);
-        shopBackRt.anchoredPosition = new Vector2(0f, 30f + PanelBleed.y);
+        MakeScrollFooter(shopPanel, shopWindow, CloseShop);
 
         // --- revive offer
         revivePanel = MakePanel(uiRoot, "RevivePanel");
@@ -6337,7 +6565,7 @@ public class GameManager : MonoBehaviour
     RectTransform goCard;
     Image goDim;
     Text goTitle, goScore, goBestLine, goRunLabel;
-    readonly Text[] goStatValue = new Text[3];
+    readonly Text[] goStatValue = new Text[2];
     float goAnimT = -1f;
     int goTargetScore;
     bool goWasBest;
@@ -6385,13 +6613,14 @@ public class GameManager : MonoBehaviour
             new Vector2(0.5f, 0.5f), new Vector2(0f, 105f), new Vector2(950f, 60f));
         goBestLine.color = new Color(1f, 1f, 1f, 0.6f);
 
-        // Three stat rows, label left and value right. The offsets are the
+        // Two stat rows, label left and value right. The offsets are the
         // CENTRE of each text box, so a left-aligned label that starts at
-        // x = -360 has to sit at -360 + width/2.
-        string[] labels = { "DISTANCE", "COINS COLLECTED", "BONUS" };
-        for (int i = 0; i < 3; i++)
+        // x = -360 has to sit at -360 + width/2. (The coins picked up are
+        // already on the coin counter, so they are not listed again.)
+        string[] labels = { "DISTANCE", "BONUS" };
+        for (int i = 0; i < labels.Length; i++)
         {
-            float y = 10f - i * 78f;
+            float y = -20f - i * 90f;
             var lab = MakeText(goCard, "GOStatL" + i, 30, TextAnchor.MiddleLeft,
                 new Vector2(0.5f, 0.5f), new Vector2(-160f, y), new Vector2(400f, 60f), true);
             lab.text = labels[i];
@@ -6418,12 +6647,11 @@ public class GameManager : MonoBehaviour
         goTargetScore = finalScore;
         goWasBest = newBest;
         goScore.text = "0";
-        goBestLine.text = newBest ? "NEW PERSONAL BEST" : "BEST  " + best;
+        goBestLine.text = newBest ? "NEW PERSONAL BEST" : Loc.F("BEST  {0}", best);
         goBestLine.color = newBest ? new Color(1f, 0.82f, 0.15f)
                                    : new Color(1f, 1f, 1f, 0.6f);
-        goStatValue[0].text = Mathf.RoundToInt(car.DistanceTraveled) + " M";
-        goStatValue[1].text = "+" + collected;
-        goStatValue[2].text = "+" + bonus;
+        goStatValue[0].text = Loc.F("{0} M", Mathf.RoundToInt(car.DistanceTraveled));
+        goStatValue[1].text = "+" + bonus;
         goAnimT = 0f;
         gameOverPanel.SetActive(true);
         gameOverPanel.transform.SetAsLastSibling();
@@ -6481,7 +6709,8 @@ public class GameManager : MonoBehaviour
         vpRt.anchorMax = Vector2.one;
         // measured from the panel's bled edges, so the visible window is the
         // same as it was before panels started overspilling the safe area
-        vpRt.offsetMin = new Vector2(PanelBleed.x, 150f + PanelBleed.y);
+        // the bottom strip is kept for the window's footer (MakeScrollFooter)
+        vpRt.offsetMin = new Vector2(PanelBleed.x, ScrollFooterHeight + PanelBleed.y);
         vpRt.offsetMax = new Vector2(-PanelBleed.x, -PanelBleed.y);
 
         var contentGo = new GameObject("Content");
@@ -6650,6 +6879,272 @@ public class GameManager : MonoBehaviour
         return roundedSprite;
     }
 
+    // ------------------------------------------------- raised buttons
+
+    /// <summary>How tall a button's side (the lip under its face) is, in canvas units.</summary>
+    const int ButtonLip = 10;
+    /// <summary>How far a button's face sinks while it is held down.</summary>
+    const int ButtonPressTravel = 7;
+    static Sprite buttonSpriteUp, buttonSpriteDown;
+
+    /// <summary>
+    /// The buttons' look: a rounded face sitting on a darker side that shows
+    /// below it, with a light bevel along the top, so each one reads as a
+    /// raised key. The pressed version has the face pushed down onto its side.
+    /// White, like the rounded sprite, so Image.color tints it to any colour.
+    /// </summary>
+    static Sprite GetButtonSprite(bool pressed)
+    {
+        Sprite cached = pressed ? buttonSpriteDown : buttonSpriteUp;
+        if (cached != null) return cached;
+
+        const int W = 64;
+        const int Face = 64;
+        const float R = 18f;
+        int h = Face + ButtonLip;
+        int faceBottom = pressed ? ButtonLip - ButtonPressTravel : ButtonLip;
+        var tex = new Texture2D(W, h, TextureFormat.RGBA32, false);
+        for (int y = 0; y < h; y++)
+        {
+            for (int x = 0; x < W; x++)
+            {
+                // the side, seen below the face
+                float lipEdge;
+                float lipA = RoundedCoverage(x, y, W, Face, R, out lipEdge);
+                float lip = 0.30f + 0.10f * (y / (float)(Face - 1));
+
+                // the face
+                int fy = y - faceBottom;
+                float faceEdge;
+                float faceA = RoundedCoverage(x, fy, W, Face, R, out faceEdge);
+                float face = 0.84f + 0.12f * (fy / (float)(Face - 1));
+                if (fy >= Face - 8 && fy < Face - 3 && faceEdge < R - 3f) face = 1f;  // bevel
+                if (faceEdge > R - 3f) face *= 0.72f;                                   // rim
+
+                float a = faceA + lipA * (1f - faceA);
+                float v = a > 0f ? (face * faceA + lip * lipA * (1f - faceA)) / a : 1f;
+                v = Mathf.Min(v, 1f);
+                tex.SetPixel(x, y, new Color(v, v, v, a));
+            }
+        }
+        tex.Apply();
+        tex.filterMode = FilterMode.Bilinear;
+        tex.wrapMode = TextureWrapMode.Clamp;
+        // left, bottom, right, top: the corners, the side and the bevel keep
+        // their size on any button, only the middle stretches
+        var sprite = Sprite.Create(tex, new Rect(0, 0, W, h), new Vector2(0.5f, 0.5f),
+            100f, 0, SpriteMeshType.FullRect,
+            new Vector4(24f, 24f + ButtonLip, 24f, 24f + ButtonPressTravel));
+        if (pressed) buttonSpriteDown = sprite;
+        else buttonSpriteUp = sprite;
+        return sprite;
+    }
+
+    /// <summary>How much of pixel (x, y) a w x h rounded rectangle covers, 0-1.</summary>
+    static float RoundedCoverage(int x, int y, int w, int h, float r, out float edge)
+    {
+        edge = 0f;
+        if (y < 0 || y >= h) return 0f;
+        float dx = Mathf.Max(Mathf.Abs(x - (w - 1) * 0.5f) - ((w - 1) * 0.5f - r), 0f);
+        float dy = Mathf.Max(Mathf.Abs(y - (h - 1) * 0.5f) - ((h - 1) * 0.5f - r), 0f);
+        edge = Mathf.Sqrt(dx * dx + dy * dy);
+        return Mathf.Clamp01(r - edge + 0.5f);
+    }
+
+    /// <summary>Gives a button the raised look and a physical press.</summary>
+    static void AddButtonDepth(Image img)
+    {
+        img.sprite = GetButtonSprite(false);
+        img.type = Image.Type.Sliced;
+        var depth = img.gameObject.AddComponent<ButtonDepth>();
+        depth.image = img;
+        depth.upSprite = GetButtonSprite(false);
+        depth.downSprite = GetButtonSprite(true);
+        depth.lift = ButtonLip * 0.5f;
+        depth.travel = ButtonPressTravel;
+    }
+
+    // ------------------------------------------------- round close buttons
+
+    static Sprite closeSpriteUp, closeSpriteDown;
+
+    /// <summary>
+    /// The round close button: a red disc with a white rim and a white X,
+    /// lit from above with a gloss across the top, standing on a darker side
+    /// with a soft shadow under it. The pressed version has the face pushed
+    /// down onto its side. Drawn in code, in full colour.
+    /// </summary>
+    static Sprite GetCloseSprite(bool pressed)
+    {
+        Sprite cached = pressed ? closeSpriteDown : closeSpriteUp;
+        if (cached != null) return cached;
+
+        const int W = 160, H = 178;
+        const float CX = 79.5f, FaceY = 101.5f, R = 72f, Rim = 7f;
+        const float Depth = 12f, Travel = 8f, Arm = 25f, Thick = 7f;
+        float fy = FaceY - (pressed ? Travel : 0f);
+        float sideY = FaceY - Depth;
+        const float Diagonal = Mathf.PI / 4f;
+
+        var tex = new Texture2D(W, H, TextureFormat.RGBA32, false);
+        var pixels = new Color[W * H];
+        for (int y = 0; y < H; y++)
+        {
+            for (int x = 0; x < W; x++)
+            {
+                Color c = new Color(1f, 1f, 1f, 0f);
+                // soft shadow under the whole button
+                float sd = Mathf.Sqrt((x - CX) * (x - CX) + (y - (FaceY - Depth - 3f)) * (y - (FaceY - Depth - 3f)));
+                c = Over(c, Color.black, 0.32f * Mathf.Clamp01((R + 9f - sd) / 12f));
+                // the side: a paler rim over dark red, showing below the face
+                c = Over(c, new Color(0.74f, 0.74f, 0.80f), Disc(x, y, CX, sideY, R));
+                c = Over(c, new Color(0.46f, 0.04f, 0.06f), Disc(x, y, CX, sideY, R - Rim));
+                // the face: white rim, red disc lit from the top
+                c = Over(c, Color.white, Disc(x, y, CX, fy, R));
+                float inner = Disc(x, y, CX, fy, R - Rim);
+                float t = Mathf.Clamp01((y - (fy - R)) / (2f * R));
+                c = Over(c, new Color(0.78f + 0.22f * t, 0.07f + 0.25f * t, 0.09f + 0.20f * t), inner);
+                // gloss across the top
+                float gloss = Disc(x, y, CX, fy + R * 0.55f, R * 0.78f) * inner
+                            * Mathf.Clamp01((y - fy) / (R * 0.35f));
+                c = Over(c, Color.white, 0.22f * gloss);
+                // the X, with a faint shadow just below it
+                float shade = Mathf.Max(Capsule(x, y, CX, fy - 2.5f, Diagonal, Arm, Thick),
+                                        Capsule(x, y, CX, fy - 2.5f, -Diagonal, Arm, Thick));
+                c = Over(c, new Color(0.35f, 0f, 0.02f), 0.45f * shade);
+                float cross = Mathf.Max(Capsule(x, y, CX, fy, Diagonal, Arm, Thick),
+                                        Capsule(x, y, CX, fy, -Diagonal, Arm, Thick));
+                c = Over(c, Color.white, cross);
+                pixels[y * W + x] = c;
+            }
+        }
+        tex.SetPixels(pixels);
+        tex.Apply();
+        tex.filterMode = FilterMode.Bilinear;
+        tex.wrapMode = TextureWrapMode.Clamp;
+        var sprite = Sprite.Create(tex, new Rect(0, 0, W, H), new Vector2(0.5f, 0.5f), 100f);
+        if (pressed) closeSpriteDown = sprite;
+        else closeSpriteUp = sprite;
+        return sprite;
+    }
+
+    /// <summary>How much of pixel (x, y) a disc covers, 0-1.</summary>
+    static float Disc(float x, float y, float cx, float cy, float r)
+    {
+        float dx = x - cx, dy = y - cy;
+        return Mathf.Clamp01(r - Mathf.Sqrt(dx * dx + dy * dy) + 0.5f);
+    }
+
+    /// <summary>How much of pixel (x, y) a rounded bar covers, 0-1.</summary>
+    static float Capsule(float x, float y, float cx, float cy, float angle,
+                         float half, float thick)
+    {
+        float ca = Mathf.Cos(angle), sa = Mathf.Sin(angle);
+        float dx = x - cx, dy = y - cy;
+        float u = Mathf.Clamp(dx * ca + dy * sa, -half, half);
+        float ex = dx - u * ca, ey = dy - u * sa;
+        return Mathf.Clamp01(thick - Mathf.Sqrt(ex * ex + ey * ey) + 0.5f);
+    }
+
+    /// <summary>Paints colour src at coverage a over dst.</summary>
+    static Color Over(Color dst, Color src, float a)
+    {
+        if (a <= 0f) return dst;
+        float oa = a + dst.a * (1f - a);
+        if (oa <= 0f) return new Color(0f, 0f, 0f, 0f);
+        float k = dst.a * (1f - a);
+        return new Color((src.r * a + dst.r * k) / oa,
+                         (src.g * a + dst.g * k) / oa,
+                         (src.b * a + dst.b * k) / oa, oa);
+    }
+
+    /// <summary>
+    /// The round red X that closes a screen - it takes the place of the old
+    /// BACK buttons. Presses down like the other buttons. Returns its
+    /// RectTransform so a screen can anchor it where it wants.
+    /// </summary>
+    RectTransform MakeCloseButton(Transform parent, Vector2 offset,
+                                  UnityEngine.Events.UnityAction onClick)
+    {
+        var go = new GameObject("CloseBtn");
+        go.transform.SetParent(parent, false);
+        var img = go.AddComponent<Image>();
+        img.sprite = GetCloseSprite(false);
+        img.preserveAspect = true;
+        var rt = img.rectTransform;
+        rt.anchorMin = rt.anchorMax = rt.pivot = new Vector2(0.5f, 0.5f);
+        rt.anchoredPosition = offset;
+        rt.sizeDelta = new Vector2(CloseSize, CloseSize * 178f / 160f);
+
+        var btn = go.AddComponent<Button>();
+        btn.targetGraphic = img;
+        btn.onClick.AddListener(onClick);
+
+        // the press: the face sinks onto its side (nothing on it to move -
+        // the X is part of the picture)
+        var depth = go.AddComponent<ButtonDepth>();
+        depth.image = img;
+        depth.upSprite = GetCloseSprite(false);
+        depth.downSprite = GetCloseSprite(true);
+        depth.lift = 0f;
+        depth.travel = 0f;
+        return rt;
+    }
+
+    /// <summary>Width of the round close buttons, in canvas units.</summary>
+    const float CloseSize = 136f;
+
+    /// <summary>Room kept under a scrolling window for its footer.</summary>
+    const float ScrollFooterHeight = 250f;
+
+    /// <summary>Space between a footer and the bottom of the screen.</summary>
+    const float ScrollFooterGap = 30f;
+
+    /// <summary>
+    /// The fixed bottom of a scrolling window. It is a strip in the window's
+    /// own colour, square on top so the scrolling card runs straight into it
+    /// and rounded underneath, with the close button in the middle. The
+    /// content scrolls away above it, so nothing slides under the button.
+    /// </summary>
+    void MakeScrollFooter(GameObject panel, Color color,
+                          UnityEngine.Events.UnityAction onClose)
+    {
+        float height = ScrollFooterHeight - ScrollFooterGap;
+
+        var footGo = new GameObject("Footer");
+        footGo.transform.SetParent(panel.transform, false);
+        var footRt = footGo.AddComponent<RectTransform>();
+        footRt.anchorMin = footRt.anchorMax = footRt.pivot = new Vector2(0.5f, 0f);
+        footRt.anchoredPosition = new Vector2(0f, ScrollFooterGap + PanelBleed.y);
+        footRt.sizeDelta = new Vector2(1010f, height);
+        // cuts the rounded top corners off the card inside, so only its
+        // rounded bottom shows
+        footGo.AddComponent<RectMask2D>();
+
+        var card = MakeCard(footGo.transform, Vector2.zero,
+            new Vector2(1010f, height + 100f), color);
+        var cardRt = card.rectTransform;
+        cardRt.anchorMin = cardRt.anchorMax = cardRt.pivot = new Vector2(0.5f, 0f);
+        cardRt.anchoredPosition = Vector2.zero;
+
+        // a faint line where the scrolling part ends
+        var lineGo = new GameObject("Divider");
+        lineGo.transform.SetParent(footGo.transform, false);
+        var line = lineGo.AddComponent<Image>();
+        line.color = new Color(1f, 1f, 1f, 0.10f);
+        line.raycastTarget = false;
+        var lineRt = line.rectTransform;
+        lineRt.anchorMin = lineRt.anchorMax = lineRt.pivot = new Vector2(0.5f, 1f);
+        lineRt.anchoredPosition = Vector2.zero;
+        lineRt.sizeDelta = new Vector2(930f, 3f);
+
+        // the button sits on the panel, not inside the mask, centred in the strip
+        var close = MakeCloseButton(panel.transform, Vector2.zero, onClose);
+        close.anchorMin = close.anchorMax = new Vector2(0.5f, 0f);
+        close.pivot = new Vector2(0.5f, 0.5f);
+        close.anchoredPosition = new Vector2(0f, ScrollFooterGap + PanelBleed.y + height * 0.5f);
+    }
+
     Image MakeCard(Transform parent, Vector2 offset, Vector2 size, Color color)
     {
         var go = new GameObject("Card");
@@ -6679,9 +7174,8 @@ public class GameManager : MonoBehaviour
         var go = new GameObject(label + "Btn");
         go.transform.SetParent(parent, false);
         var img = go.AddComponent<Image>();
-        img.sprite = GetRoundedSprite();
-        img.type = Image.Type.Sliced;
         img.color = tint ?? new Color(0.96f, 0.47f, 0.13f); // warm arcade orange
+        AddButtonDepth(img);
         var rt = img.rectTransform;
         rt.anchorMin = rt.anchorMax = rt.pivot = new Vector2(0.5f, 0.5f);
         rt.anchoredPosition = offset;
@@ -6695,6 +7189,148 @@ public class GameManager : MonoBehaviour
             new Vector2(0.5f, 0.5f), Vector2.zero, size, plainFont);
         text.text = label;
         return text;
+    }
+
+    const string SettingsIconPath = "UI/icon_settings";
+
+    /// <summary>
+    /// A square button showing a white icon on a dark rounded tile. If the
+    /// icon cannot be found it falls back to a text label, so the button is
+    /// never blank.
+    /// </summary>
+    Button MakeIconButton(Transform parent, string iconPath, string fallbackLabel,
+        Vector2 anchor, Vector2 offset, Vector2 size,
+        UnityEngine.Events.UnityAction onClick)
+    {
+        var go = new GameObject(fallbackLabel + "Btn");
+        go.transform.SetParent(parent, false);
+        var img = go.AddComponent<Image>();
+        // slate rather than near-black, so the raised edge still shows
+        img.color = new Color(0.26f, 0.24f, 0.34f, 0.94f);
+        AddButtonDepth(img);
+        var rt = img.rectTransform;
+        rt.anchorMin = rt.anchorMax = rt.pivot = anchor;
+        rt.anchoredPosition = offset;
+        rt.sizeDelta = size;
+
+        var btn = go.AddComponent<Button>();
+        btn.targetGraphic = img;
+        btn.onClick.AddListener(onClick);
+
+        Texture2D icon = Resources.Load<Texture2D>(iconPath);
+        if (icon != null)
+        {
+            var iconGo = new GameObject("Icon");
+            iconGo.transform.SetParent(go.transform, false);
+            var raw = iconGo.AddComponent<RawImage>();
+            raw.texture = icon;
+            raw.raycastTarget = false;
+            var iRt = raw.rectTransform;
+            iRt.anchorMin = iRt.anchorMax = iRt.pivot = new Vector2(0.5f, 0.5f);
+            iRt.anchoredPosition = Vector2.zero;
+            iRt.sizeDelta = size * 0.66f;
+        }
+        else
+        {
+            var label = MakeText(go.transform, "Label", 22, TextAnchor.MiddleCenter,
+                new Vector2(0.5f, 0.5f), Vector2.zero, size, true);
+            label.text = fallbackLabel;
+        }
+        return btn;
+    }
+
+    static Texture2D checkerTexture;
+
+    /// <summary>A black-and-white chequer tile, drawn in code (2x2 squares).</summary>
+    static Texture2D GetCheckerTexture()
+    {
+        if (checkerTexture != null) return checkerTexture;
+        const int S = 64;
+        var tex = new Texture2D(S, S, TextureFormat.RGBA32, false);
+        Color dark = new Color(0.07f, 0.07f, 0.08f, 1f);
+        Color light = new Color(0.96f, 0.96f, 0.96f, 1f);
+        for (int y = 0; y < S; y++)
+            for (int x = 0; x < S; x++)
+                tex.SetPixel(x, y, ((x < S / 2) == (y < S / 2)) ? dark : light);
+        tex.Apply();
+        tex.wrapMode = TextureWrapMode.Repeat;
+        tex.filterMode = FilterMode.Bilinear;
+        checkerTexture = tex;
+        return tex;
+    }
+
+    /// <summary>
+    /// The big RACES button: an orange frame around a chequered flag, with the
+    /// word in orange on a dark stripe across the middle so it stays readable
+    /// against the black and white squares.
+    /// </summary>
+    Text MakeRaceButton(Transform parent, Vector2 offset, Vector2 size)
+    {
+        // orange frame - this is what the button tints when pressed
+        var go = new GameObject("RACESBtn");
+        go.transform.SetParent(parent, false);
+        var frame = go.AddComponent<Image>();
+        frame.color = new Color(0.96f, 0.47f, 0.13f);
+        AddButtonDepth(frame);
+        var rt = frame.rectTransform;
+        rt.anchorMin = rt.anchorMax = rt.pivot = new Vector2(0.5f, 0.5f);
+        rt.anchoredPosition = offset;
+        rt.sizeDelta = size;
+
+        var btn = go.AddComponent<Button>();
+        btn.targetGraphic = frame;
+        btn.onClick.AddListener(OpenRaces);
+
+        // the flag, clipped to a rounded face just inside the frame
+        var faceGo = new GameObject("Flag");
+        faceGo.transform.SetParent(go.transform, false);
+        var face = faceGo.AddComponent<Image>();
+        face.sprite = GetRoundedSprite();
+        face.type = Image.Type.Sliced;
+        face.color = Color.black;
+        face.raycastTarget = false;
+        var fRt = face.rectTransform;
+        fRt.anchorMin = Vector2.zero;
+        fRt.anchorMax = Vector2.one;
+        // inset 8 all round inside the raised face. (Everything on a button
+        // is lifted by half the lip once it is built - see ButtonDepth - so
+        // this is set that much lower here to end up level with the face.)
+        fRt.offsetMin = new Vector2(8f, 8f + ButtonLip * 0.5f);
+        fRt.offsetMax = new Vector2(-8f, -8f - ButtonLip * 0.5f);
+        faceGo.AddComponent<Mask>().showMaskGraphic = true;
+
+        // chequers, tipped a few degrees so it reads as a flag in the wind
+        const float Square = 30f;
+        var checkGo = new GameObject("Chequers");
+        checkGo.transform.SetParent(faceGo.transform, false);
+        var check = checkGo.AddComponent<RawImage>();
+        check.texture = GetCheckerTexture();
+        check.raycastTarget = false;
+        Vector2 cover = new Vector2(size.x + 160f, size.y + 260f);
+        check.uvRect = new Rect(0f, 0f, cover.x / (Square * 2f), cover.y / (Square * 2f));
+        var cRt = check.rectTransform;
+        cRt.anchorMin = cRt.anchorMax = cRt.pivot = new Vector2(0.5f, 0.5f);
+        cRt.anchoredPosition = Vector2.zero;
+        cRt.sizeDelta = cover;
+        cRt.localRotation = Quaternion.Euler(0f, 0f, -7f);
+
+        // the dark wash over the whole flag - the chequers show through it
+        // evenly, and the orange word reads anywhere on it
+        var bandGo = new GameObject("Shade");
+        bandGo.transform.SetParent(faceGo.transform, false);
+        var band = bandGo.AddComponent<Image>();
+        band.color = new Color(0f, 0f, 0f, 0.72f);
+        band.raycastTarget = false;
+        var bRt = band.rectTransform;
+        bRt.anchorMin = Vector2.zero;
+        bRt.anchorMax = Vector2.one;
+        bRt.offsetMin = bRt.offsetMax = Vector2.zero;
+
+        var label = MakeText(faceGo.transform, "Label", 64, TextAnchor.MiddleCenter,
+            new Vector2(0.5f, 0.5f), Vector2.zero, size);
+        label.text = "RACES";
+        label.color = new Color(1f, 0.55f, 0.08f);
+        return label;
     }
 
     /// <summary>
@@ -6806,17 +7442,24 @@ public class GameManager : MonoBehaviour
     {
         var go = new GameObject(name);
         go.transform.SetParent(parent, false);
-        var text = go.AddComponent<Text>();
-        text.font = plainFont
-            ? Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf")
-            : uiFont;
+        // LocText: translates whatever is written to it, and lays out
+        // Arabic and Hindi properly (see Loc)
+        var text = go.AddComponent<LocText>();
+        // languages the game font cannot write bring their own font
+        Font langFont = plainFont ? Loc.PlainFontFor(Loc.Current) : Loc.DisplayFontFor(Loc.Current);
+        text.font = langFont != null ? langFont
+                  : plainFont ? Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf")
+                  : uiFont;
         // The plain font is used where legibility matters most - small,
         // number-heavy labels - so it is set a little larger and bold to hold
         // its own against the display font around it.
-        text.fontSize = Mathf.RoundToInt(size * FontScale * (plainFont ? 1.2f : 1f));
+        text.fontSize = Mathf.RoundToInt(size * FontScale * (plainFont ? 1.2f : 1f)
+                                         * Loc.SizeScale(Loc.Current));
         // custom racing fonts are usually already slanted; the fallback font
-        // gets bold+italic to fake the same look
-        text.fontStyle = plainFont ? FontStyle.Bold
+        // gets bold+italic to fake the same look. The language fonts are
+        // already bold, so they are left as drawn.
+        text.fontStyle = langFont != null ? FontStyle.Normal
+                       : plainFont ? FontStyle.Bold
                        : usingCustomFont ? FontStyle.Bold : FontStyle.BoldAndItalic;
         text.alignment = anchor;
         text.color = Color.white;

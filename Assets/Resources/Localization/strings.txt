@@ -1,0 +1,198 @@
+key	en	es	pt	fr	de	ru	zh	ja	ko	ar	hi
+# Driftline text. One row per piece of text; the first column is the English the game's code uses to find it - do not change that column. Empty cell = shows in English. \n = new line, \0 = shows nothing. Keep {0}, {1} where they are. After changing Russian, Chinese, Japanese, Korean, Arabic or Hindi, run Tools/Localization/build_fonts.py.
+PLAY		JUGAR	JOGAR	JOUER	SPIELEN	ИГРАТЬ	开始	プレイ	플레이	العب	खेलें
+RACES		CARRERAS	CORRIDAS	COURSES	RENNEN	ГОНКИ	比赛	レース	레이스	سباقات	रेस
+SPIN		GIRAR	GIRAR	TOURNER	DREHEN	КРУТИТЬ	转盘	スピン	돌리기	أدِر	घुमाएँ
+SPIN  {0}		GIRAR  {0}	GIRAR  {0}	TOURNER  {0}	DREHEN  {0}	КРУТИТЬ  {0}	转盘  {0}	スピン  {0}	돌리기  {0}	أدِر  {0}	घुमाएँ  {0}
+GARAGE		GARAJE	GARAGEM	GARAGE	GARAGE	ГАРАЖ	车库	ガレージ	차고	المرآب	गैराज
+SHOP		TIENDA	LOJA	BOUTIQUE	SHOP	МАГАЗИН	商店	ショップ	상점	المتجر	दुकान
+QUESTS		MISIONES	MISSÕES	QUÊTES	AUFGABEN	ЗАДАНИЯ	任务	クエスト	퀘스트	المهام	मिशन
+SETTINGS		AJUSTES	AJUSTES	RÉGLAGES	OPTIONEN	НАСТРОЙКИ	设置	設定	설정	الإعدادات	सेटिंग्स
+SLIDE THUMB TO STEER		DESLIZA EL PULGAR PARA GIRAR	DESLIZE O POLEGAR PARA VIRAR	GLISSE LE POUCE POUR DIRIGER	DAUMEN ZIEHEN ZUM LENKEN	ВЕДИ ПАЛЬЦЕМ, ЧТОБЫ РУЛИТЬ	滑动拇指转向	親指をスライドして操作	엄지를 밀어 조종하세요	حرّك إبهامك للتوجيه	मोड़ने के लिए अंगूठा खिसकाएँ
+COINS  {0}		MONEDAS  {0}	MOEDAS  {0}	PIÈCES  {0}	MÜNZEN  {0}	МОНЕТЫ  {0}	金币  {0}	コイン  {0}	코인  {0}	العملات  {0}	सिक्के  {0}
+BEST  {0}		RÉCORD  {0}	RECORDE  {0}	RECORD  {0}	BESTWERT  {0}	РЕКОРД  {0}	最高  {0}	ベスト  {0}	최고  {0}	الأفضل  {0}	सर्वश्रेष्ठ  {0}
+TIRES  {0}		NEUMÁTICOS  {0}	PNEUS  {0}	PNEUS  {0}	REIFEN  {0}	ШИНЫ  {0}	轮胎  {0}	タイヤ  {0}	타이어  {0}	الإطارات  {0}	टायर  {0}
+BACK		VOLVER	VOLTAR	RETOUR	ZURÜCK	НАЗАД	返回	戻る	뒤로	رجوع	वापस
+LANGUAGE		IDIOMA	IDIOMA	LANGUE	SPRACHE	ЯЗЫК	语言	言語	언어	اللغة	भाषा
+LANGUAGE: {0}		IDIOMA: {0}	IDIOMA: {0}	LANGUE : {0}	SPRACHE: {0}	ЯЗЫК: {0}	语言：{0}	言語：{0}	언어: {0}	اللغة: {0}	भाषा: {0}
+AUDIO		AUDIO	ÁUDIO	AUDIO	AUDIO	ЗВУК	音频	サウンド	오디오	الصوت	ऑडियो
+GENERAL		GENERAL	GERAL	GÉNÉRAL	ALLGEMEIN	ОБЩИЕ	通用	一般	일반	عام	सामान्य
+CREDITS		CRÉDITOS	CRÉDITOS	CRÉDITS	CREDITS	АВТОРЫ	制作人员	クレジット	제작진	شكر وتقدير	क्रेडिट्स
+MASTER VOLUME		VOLUMEN GENERAL	VOLUME GERAL	VOLUME GÉNÉRAL	GESAMTLAUTSTÄRKE	ОБЩАЯ ГРОМКОСТЬ	主音量	マスター音量	전체 볼륨	مستوى الصوت العام	मुख्य वॉल्यूम
+MUSIC		MÚSICA	MÚSICA	MUSIQUE	MUSIK	МУЗЫКА	音乐	音楽	음악	الموسيقى	संगीत
+SOUND EFFECTS		EFECTOS DE SONIDO	EFEITOS SONOROS	EFFETS SONORES	SOUNDEFFEKTE	ЗВУКОВЫЕ ЭФФЕКТЫ	音效	効果音	효과음	المؤثرات الصوتية	साउंड इफ़ेक्ट
+ENGINE		MOTOR	MOTOR	MOTEUR	MOTOR	ДВИГАТЕЛЬ	引擎	エンジン	엔진	المحرك	इंजन
+DRIFT		DERRAPE	DRIFT	DÉRAPAGE	DRIFT	ДРИФТ	漂移	ドリフト	드리프트	الانجراف	ड्रिफ्ट
+COINS		MONEDAS	MOEDAS	PIÈCES	MÜNZEN	МОНЕТЫ	金币	コイン	코인	العملات	सिक्के
+STEERING SENSITIVITY		SENSIBILIDAD DE GIRO	SENSIBILIDADE DA DIREÇÃO	SENSIBILITÉ DE DIRECTION	LENKEMPFINDLICHKEIT	ЧУВСТВИТЕЛЬНОСТЬ РУЛЯ	转向灵敏度	ハンドル感度	조향 감도	حساسية التوجيه	स्टीयरिंग संवेदनशीलता
+STEERING: {0}		DIRECCIÓN: {0}	DIREÇÃO: {0}	DIRECTION : {0}	LENKUNG: {0}	РУЛЬ: {0}	转向：{0}	操作：{0}	조향: {0}	التوجيه: {0}	स्टीयरिंग: {0}
+INVERTED		INVERTIDA	INVERTIDA	INVERSÉE	INVERTIERT	ИНВЕРСИЯ	反向	反転	반전	معكوس	उलटा
+NORMAL		NORMAL	NORMAL	NORMALE	NORMAL	ОБЫЧНЫЙ	正常	通常	기본	عادي	सामान्य
+SPEED: {0}		VELOCIDAD: {0}	VELOCIDADE: {0}	VITESSE : {0}	TEMPO: {0}	СКОРОСТЬ: {0}	速度：{0}	速度：{0}	속도: {0}	السرعة: {0}	गति: {0}
+MPH		MPH	MPH	MPH	MPH	МИЛЬ/Ч	英里/时	mph	mph	ميل/س	मील/घं
+KM/H		KM/H	KM/H	KM/H	KM/H	КМ/Ч	公里/时	km/h	km/h	كم/س	किमी/घं
+{0} MPH		{0} MPH	{0} MPH	{0} MPH	{0} MPH	{0} МИЛЬ/Ч	{0} 英里/时	{0} mph	{0} mph	{0} ميل/س	{0} मील/घं
+{0} KM/H		{0} KM/H	{0} KM/H	{0} KM/H	{0} KM/H	{0} КМ/Ч	{0} 公里/时	{0} km/h	{0} km/h	{0} كم/س	{0} किमी/घं
+by MEIND GAMES		por MEIND GAMES	por MEIND GAMES	par MEIND GAMES	von MEIND GAMES	от MEIND GAMES	由 MEIND GAMES 制作	制作：MEIND GAMES	제작: MEIND GAMES	من MEIND GAMES	MEIND GAMES द्वारा
+3D MODELS		MODELOS 3D	MODELOS 3D	MODÈLES 3D	3D-MODELLE	3D-МОДЕЛИ	3D 模型	3Dモデル	3D 모델	نماذج ثلاثية الأبعاد	3D मॉडल
+Music and sound effects\ncreated for this game		Música y efectos de sonido\ncreados para este juego	Música e efeitos sonoros\ncriados para este jogo	Musique et effets sonores\ncréés pour ce jeu	Musik und Soundeffekte\nfür dieses Spiel erstellt	Музыка и звуковые эффекты\nсозданы для этой игры	音乐和音效\n为本游戏专门制作	音楽と効果音は\nこのゲームのために制作	음악과 효과음은\n이 게임을 위해 제작	الموسيقى والمؤثرات الصوتية\nصُنعت لهذه اللعبة	संगीत और साउंड इफ़ेक्ट\nइस गेम के लिए बनाए गए
+FONTS		FUENTES	FONTES	POLICES	SCHRIFTEN	ШРИФТЫ	字体	フォント	글꼴	الخطوط	फ़ॉन्ट
+(SIL Open Font License)		(Licencia SIL Open Font)	(Licença SIL Open Font)	(Licence SIL Open Font)	(SIL Open Font License)	(SIL Open Font License)	（SIL 开放字体许可）	（SIL Open Font License）	(SIL 오픈 폰트 라이선스)	(رخصة SIL Open Font)	(SIL ओपन फ़ॉन्ट लाइसेंस)
+All models used under their\nrespective licenses.		Todos los modelos se usan\nbajo sus licencias.	Todos os modelos usados\nsob suas licenças.	Tous les modèles sont utilisés\nselon leurs licences.	Alle Modelle werden gemäß\nihren Lizenzen verwendet.	Все модели используются\nпо их лицензиям.	所有模型均按其各自的\n许可使用。	すべてのモデルは\nそれぞれのライセンスに従い使用。	모든 모델은 각각의\n라이선스에 따라 사용됩니다.	جميع النماذج مستخدمة\nوفق تراخيصها.	सभी मॉडल अपने-अपने\nलाइसेंस के तहत उपयोग किए गए।
+VOLT TOKENS		FICHAS VOLT	FICHAS VOLT	JETONS VOLT	VOLT-TOKENS	ЖЕТОНЫ VOLT	VOLT代币	VOLTトークン	VOLT 토큰	رموز VOLT	VOLT टोकन
+TAURION TOKENS		FICHAS TAURION	FICHAS TAURION	JETONS TAURION	TAURION-TOKENS	ЖЕТОНЫ TAURION	TAURION代币	TAURIONトークン	TAURION 토큰	رموز TAURION	TAURION टोकन
+CALDERA TOKENS		FICHAS CALDERA	FICHAS CALDERA	JETONS CALDERA	CALDERA-TOKENS	ЖЕТОНЫ CALDERA	CALDERA代币	CALDERAトークン	CALDERA 토큰	رموز CALDERA	CALDERA टोकन
+STELLARA TOKENS		FICHAS STELLARA	FICHAS STELLARA	JETONS STELLARA	STELLARA-TOKENS	ЖЕТОНЫ STELLARA	STELLARA代币	STELLARAトークン	STELLARA 토큰	رموز STELLARA	STELLARA टोकन
+DRIVE {0}M IN ONE RUN		CONDUCE {0} M EN UNA PARTIDA	DIRIJA {0} M EM UMA PARTIDA	ROULE {0} M EN UNE PARTIE	FAHRE {0} M IN EINER RUNDE	ПРОЕДЬ {0} М ЗА ЗАЕЗД	单局行驶 {0} 米	1回で{0}m走る	한 판에 {0}m 달리기	اقطع {0} م في جولة واحدة	एक रन में {0} मी तय करें
+DRIVE {0}M TOTAL		CONDUCE {0} M EN TOTAL	DIRIJA {0} M NO TOTAL	ROULE {0} M AU TOTAL	FAHRE INSGESAMT {0} M	ПРОЕДЬ ВСЕГО {0} М	累计行驶 {0} 米	合計{0}m走る	총 {0}m 달리기	اقطع {0} م إجمالاً	कुल {0} मी तय करें
+COLLECT {0} COINS IN ONE RUN		CONSIGUE {0} MONEDAS EN UNA PARTIDA	PEGUE {0} MOEDAS EM UMA PARTIDA	RAMASSE {0} PIÈCES EN UNE PARTIE	SAMMLE {0} MÜNZEN IN EINER RUNDE	СОБЕРИ {0} МОНЕТ ЗА ЗАЕЗД	单局收集 {0} 枚金币	1回でコインを{0}枚集める	한 판에 코인 {0}개 모으기	اجمع {0} عملة في جولة واحدة	एक रन में {0} सिक्के जमा करें
+COLLECT {0} COINS TOTAL		CONSIGUE {0} MONEDAS EN TOTAL	PEGUE {0} MOEDAS NO TOTAL	RAMASSE {0} PIÈCES AU TOTAL	SAMMLE INSGESAMT {0} MÜNZEN	СОБЕРИ ВСЕГО {0} МОНЕТ	累计收集 {0} 枚金币	合計でコインを{0}枚集める	코인 총 {0}개 모으기	اجمع {0} عملة إجمالاً	कुल {0} सिक्के जमा करें
+GET {0} NEAR MISSES		LOGRA {0} CASI CHOQUES	FAÇA {0} QUASE-BATIDAS	RÉUSSIS {0} FRÔLEMENTS	SCHAFFE {0} BEINAHE-CRASHS	СДЕЛАЙ {0} ОПАСНЫХ ОБГОНОВ	完成 {0} 次擦身而过	ニアミスを{0}回	아슬아슬 회피 {0}회	تجاوزات خطيرة: {0}	{0} बार बाल-बाल बचें
+BANK A {0}+ DRIFT COMBO		CONSIGUE UN COMBO DE {0}+	FAÇA UM COMBO DE {0}+	RÉUSSIS UN COMBO DE {0}+	SICHERE EINE {0}+ DRIFT-KOMBO	НАБЕРИ ДРИФТ-КОМБО {0}+	达成 {0}+ 漂移连击	{0}以上のドリフトコンボ	{0}+ 드리프트 콤보 달성	حقق كومبو انجراف {0}+	{0}+ ड्रिफ्ट कॉम्बो बनाएँ
+HIT {0} OIL SPILLS		PISA {0} MANCHAS DE ACEITE	PASSE POR {0} MANCHAS DE ÓLEO	ROULE SUR {0} FLAQUES D'HUILE	FAHRE ÜBER {0} ÖLFLECKEN	НАЕДЬ НА {0} МАСЛЯНЫХ ПЯТЕН	压过 {0} 摊油渍	オイルを{0}回踏む	기름 웅덩이 {0}번 밟기	المرور فوق بقع الزيت: {0}	{0} तेल के धब्बों से गुज़रें
+PLAY {0} RUNS		JUEGA {0} PARTIDAS	JOGUE {0} PARTIDAS	JOUE {0} PARTIES	SPIELE {0} RUNDEN	СЫГРАЙ {0} ЗАЕЗДОВ	进行 {0} 局游戏	{0}回プレイ	{0}판 플레이	العب جولات: {0}	{0} रन खेलें
+DONE!		HECHO	FEITO!	FAIT !	GESCHAFFT!	ГОТОВО!	完成！	達成！	완료!	تم!	पूरा!
+QUESTS DONE! X{0}  +6 TIRES		MISIONES COMPLETAS  X{0}  +6 NEUMÁTICOS	MISSÕES CONCLUÍDAS! X{0}  +6 PNEUS	QUÊTES FINIES ! X{0}  +6 PNEUS	AUFGABEN ERLEDIGT! X{0}  +6 REIFEN	ЗАДАНИЯ ВЫПОЛНЕНЫ! X{0}  +6 ШИН	任务完成！X{0}  +6 轮胎	クエスト達成！X{0}  タイヤ+6	퀘스트 완료! X{0}  타이어 +6	اكتملت المهام! X{0}  +6 إطارات	मिशन पूरे! X{0}  +6 टायर
+SCORE MULTIPLIER  X{0}		MULTIPLICADOR  X{0}	MULTIPLICADOR  X{0}	MULTIPLICATEUR  X{0}	PUNKTE-MULTIPLIKATOR  X{0}	МНОЖИТЕЛЬ ОЧКОВ  X{0}	得分倍数  X{0}	スコア倍率  X{0}	점수 배율  X{0}	مضاعف النقاط  X{0}	स्कोर गुणक  X{0}
+COMPLETE ALL 3\n+1 MULTIPLIER   +6 TIRES		COMPLETA LAS 3\n+1 MULTIPLICADOR   +6 NEUMÁTICOS	COMPLETE AS 3\n+1 MULTIPLICADOR   +6 PNEUS	TERMINE LES 3\n+1 MULTIPLICATEUR   +6 PNEUS	ERLEDIGE ALLE 3\n+1 MULTIPLIKATOR   +6 REIFEN	ВЫПОЛНИ ВСЕ 3\n+1 К МНОЖИТЕЛЮ   +6 ШИН	完成全部 3 个任务\n倍数 +1   轮胎 +6	3つ全部達成で\n倍率+1   タイヤ+6	3개 모두 완료하면\n배율 +1   타이어 +6	أكمل المهام الثلاث\n+1 للمضاعف   +6 إطارات	तीनों पूरे करें\n+1 गुणक   +6 टायर
+SHIELD		ESCUDO	ESCUDO	BOUCLIER	SCHILD	ЩИТ	护盾	シールド	보호막	درع	शील्ड
+2X COINS		2X MONEDAS	2X MOEDAS	2X PIÈCES	2X MÜNZEN	2X МОНЕТЫ	双倍金币	コイン2倍	코인 2배	عملات 2X	2X सिक्के
+MAGNET		IMÁN	ÍMÃ	AIMANT	MAGNET	МАГНИТ	磁铁	マグネット	자석	مغناطيس	चुंबक
+2X SCORE		2X PUNTOS	2X PONTOS	2X SCORE	2X PUNKTE	2X ОЧКИ	双倍得分	スコア2倍	점수 2배	نقاط 2X	2X स्कोर
+SPRINGS		RESORTES	MOLAS	RESSORTS	FEDERN	ПРУЖИНЫ	弹簧	スプリング	스프링	نوابض	स्प्रिंग
+DOUBLE COINS		MONEDAS DOBLES	MOEDAS DOBRADAS	PIÈCES DOUBLES	DOPPELTE MÜNZEN	ДВОЙНЫЕ МОНЕТЫ	双倍金币	コイン2倍	코인 2배	عملات مضاعفة	दोगुने सिक्के
+COIN MAGNET		IMÁN DE MONEDAS	ÍMÃ DE MOEDAS	AIMANT À PIÈCES	MÜNZMAGNET	МАГНИТ ДЛЯ МОНЕТ	金币磁铁	コインマグネット	코인 자석	مغناطيس العملات	सिक्का चुंबक
+DOUBLE SCORE		PUNTOS DOBLES	PONTOS DOBRADOS	SCORE DOUBLE	DOPPELTE PUNKTE	ДВОЙНЫЕ ОЧКИ	双倍得分	スコア2倍	점수 2배	نقاط مضاعفة	दोगुना स्कोर
+POWER UP DURATION		DURACIÓN DE POTENCIADORES	DURAÇÃO DOS PODERES	DURÉE DES BONUS	POWER-UP-DAUER	ДЛИТЕЛЬНОСТЬ БОНУСОВ	道具持续时间	パワーアップの持続時間	파워업 지속 시간	مدة التعزيزات	पावर-अप की अवधि
+LV {0}		NV {0}	NV {0}	NIV {0}	STUFE {0}	УР. {0}	等级 {0}	Lv {0}	Lv {0}	مستوى {0}	लेवल {0}
+LV {0}/7		NV {0}/7	NV {0}/7	NIV {0}/7	STUFE {0}/7	УР. {0}/7	等级 {0}/7	Lv {0}/7	Lv {0}/7	مستوى {0}/7	लेवल {0}/7
+{0}s		{0} s	{0} s	{0} s	{0} s	{0} СЕК	{0}秒	{0}秒	{0}초	{0} ث	{0} से.
+MAX		MÁX	MÁX	MAX	MAX	МАКС	满级	最大	최대	الأقصى	अधिकतम
+NEW HIGH SCORE		NUEVO RÉCORD	NOVO RECORDE	NOUVEAU RECORD	NEUER HIGHSCORE	НОВЫЙ РЕКОРД	新纪录	ハイスコア更新	신기록	رقم قياسي جديد	नया हाई स्कोर
+TAP TO CONTINUE		TOCA PARA CONTINUAR	TOQUE PARA CONTINUAR	TOUCHE POUR CONTINUER	TIPPEN ZUM FORTFAHREN	НАЖМИ, ЧТОБЫ ПРОДОЛЖИТЬ	点击继续	タップして続ける	탭하여 계속	اضغط للمتابعة	जारी रखने के लिए टैप करें
+DAY {0}		DÍA {0}	DIA {0}	JOUR {0}	TAG {0}	ДЕНЬ {0}	第 {0} 天	{0}日目	{0}일차	اليوم {0}	दिन {0}
+(STREAK {0})		(RACHA {0})	(SEQUÊNCIA {0})	(SÉRIE {0})	(SERIE {0})	(СЕРИЯ {0})	（连续 {0} 天）	（連続{0}日）	(연속 {0}일)	(سلسلة {0})	(लगातार {0} दिन)
+COME BACK TOMORROW!		VUELVE MAÑANA	VOLTE AMANHÃ!	REVIENS DEMAIN !	KOMM MORGEN WIEDER!	ВОЗВРАЩАЙСЯ ЗАВТРА!	明天再来！	また明日！	내일 또 오세요!	عُد غداً!	कल फिर आएँ!
++{0} COINS		+{0} MONEDAS	+{0} MOEDAS	+{0} PIÈCES	+{0} MÜNZEN	+{0} МОНЕТ	+{0} 金币	コイン+{0}	코인 +{0}	+{0} عملة	+{0} सिक्के
+NEW CAR!\n{0}		NUEVO AUTO\n{0}	CARRO NOVO!\n{0}	NOUVELLE VOITURE !\n{0}	NEUES AUTO!\n{0}	НОВАЯ МАШИНА!\n{0}	新车！\n{0}	新しい車！\n{0}	새 차!\n{0}	سيارة جديدة!\n{0}	नई कार!\n{0}
+OK		OK	OK	OK	OK	ОК	确定	OK	확인	حسناً	ठीक है
+CLAIM		RECLAMAR	RESGATAR	RÉCUPÉRER	ABHOLEN	ЗАБРАТЬ	领取	受け取る	받기	استلم	लें
+CAR		AUTO	CARRO	VOITURE	AUTO	МАШИНА	赛车	車	자동차	سيارة	कार
+LOGIN STREAK		RACHA DIARIA	SEQUÊNCIA DIÁRIA	SÉRIE DE CONNEXIONS	LOGIN-SERIE	ЕЖЕДНЕВНАЯ СЕРИЯ	连续登录	連続ログイン	연속 출석	سلسلة الدخول	लगातार लॉगिन
+NOT ENOUGH\nCOINS		MONEDAS\nINSUFICIENTES	MOEDAS\nINSUFICIENTES	PAS ASSEZ\nDE PIÈCES	NICHT GENUG\nMÜNZEN	НЕ ХВАТАЕТ\nМОНЕТ	金币\n不足	コインが\n足りない	코인\n부족	العملات\nغير كافية	सिक्के\nकम हैं
+UPGRADES		MEJORAS	MELHORIAS	AMÉLIORATIONS	UPGRADES	УЛУЧШЕНИЯ	升级	アップグレード	업그레이드	الترقيات	अपग्रेड
+WON		GANADA	VENCEU	GAGNÉE	GEWONNEN	ПОБЕДА	已获胜	勝利	승리	فوز	जीती
+GO!		YA	JÁ!	GO !	LOS!	СТАРТ!	出发！	GO！	출발!	انطلق!	चलो!
+P{0}/{1}		P{0}/{1}	P{0}/{1}	P{0}/{1}	P{0}/{1}	{0}/{1}	{0}/{1}	{0}位/{1}	{0}위/{1}	{0}/{1}	{0}/{1}
+{0}M		{0} M	{0} M	{0} M	{0} M	{0} М	{0}米	{0}m	{0}m	{0} م	{0} मी
+WINNER!		GANASTE	VENCEDOR!	VICTOIRE !	SIEG!	ПОБЕДА!	胜利！	優勝！	우승!	فزت!	जीत गए!
+FINISHED P{0}		TERMINASTE P{0}	TERMINOU P{0}	ARRIVÉ P{0}	ZIEL: PLATZ {0}	ФИНИШ: {0}-Е МЕСТО	第 {0} 名完赛	{0}位でゴール	{0}위로 완주	أنهيت في المركز {0}	{0} नंबर पर रहे
+NEXT RACE UNLOCKED		SIGUIENTE CARRERA DESBLOQUEADA	PRÓXIMA CORRIDA LIBERADA	COURSE SUIVANTE DÉBLOQUÉE	NÄCHSTES RENNEN FREIGESCHALTET	СЛЕДУЮЩАЯ ГОНКА ОТКРЫТА	下一场比赛已解锁	次のレースが解放！	다음 레이스 잠금 해제	تم فتح السباق التالي	अगली रेस अनलॉक
+1ST PLACE UNLOCKS THE NEXT RACE		EL 1.ER PUESTO DESBLOQUEA LA SIGUIENTE	O 1º LUGAR LIBERA A PRÓXIMA CORRIDA	LA 1RE PLACE DÉBLOQUE LA SUIVANTE	PLATZ 1 SCHALTET DAS NÄCHSTE FREI	1-Е МЕСТО ОТКРОЕТ СЛЕДУЮЩУЮ ГОНКУ	获得第 1 名解锁下一场	1位で次のレースが解放	1위를 하면 다음 레이스가 열려요	المركز الأول يفتح السباق التالي	पहला स्थान पाकर अगली रेस अनलॉक करें
+ORD 1	st	º	º	er	.	-Й	名	位	위	\0	\0
+ORD 2	nd	º	º	e	.	-Й	名	位	위	\0	\0
+ORD 3	rd	º	º	e	.	-Й	名	位	위	\0	\0
+ORD N	th	º	º	e	.	-Й	名	位	위	\0	\0
+BOOST!		TURBO	TURBO!	TURBO !	BOOST!	УСКОРЕНИЕ!	加速！	ブースト！	부스트!	تسارع!	बूस्ट!
+COUNTRYSIDE		CAMPO	CAMPO	CAMPAGNE	LANDSTRASSE	ДЕРЕВНЯ	乡村	田園	시골	الريف	गाँव
+SUNSET		ATARDECER	PÔR DO SOL	COUCHER DE SOLEIL	SONNENUNTERGANG	ЗАКАТ	日落	夕暮れ	석양	الغروب	सूर्यास्त
+CITY		CIUDAD	CIDADE	VILLE	STADT	ГОРОД	城市	シティ	도시	المدينة	शहर
+SNOW PEAKS		PICOS NEVADOS	PICOS NEVADOS	SOMMETS ENNEIGÉS	SCHNEEGIPFEL	СНЕЖНЫЕ ВЕРШИНЫ	雪峰	雪の峰	설봉	القمم الثلجية	बर्फ़ीली चोटियाँ
+FOREST		BOSQUE	FLORESTA	FORÊT	WALD	ЛЕС	森林	森	숲	الغابة	जंगल
+SNOW MOUNTAINS		MONTAÑAS NEVADAS	MONTANHAS NEVADAS	MONTAGNES ENNEIGÉES	SCHNEEBERGE	СНЕЖНЫЕ ГОРЫ	雪山	雪山	눈 덮인 산	الجبال الثلجية	बर्फ़ीले पहाड़
+TIME REWIND!		REBOBINADO	VOLTA NO TEMPO!	REMBOBINAGE !	ZURÜCKGESPULT!	ПЕРЕМОТКА ВРЕМЕНИ!	时光倒流！	巻き戻し！	시간 되감기!	إرجاع الوقت!	समय पीछे!
+MYSTERY WHEEL		RULETA MISTERIOSA	ROLETA MISTERIOSA	ROUE MYSTÈRE	GLÜCKSRAD	КОЛЕСО УДАЧИ	神秘转盘	ミステリーホイール	미스터리 휠	العجلة الغامضة	मिस्ट्री व्हील
+{0}  SPINS LEFT		QUEDAN {0} GIROS	{0} GIROS RESTANTES	{0} TOURS RESTANTS	NOCH {0} DREHUNGEN	ОСТАЛОСЬ ВРАЩЕНИЙ: {0}	剩余 {0} 次	残り{0}回	{0}회 남음	اللفات المتبقية: {0}	{0} स्पिन बाकी
+BUY A SPIN BELOW		COMPRA UN GIRO ABAJO	COMPRE UM GIRO ABAIXO	ACHÈTE UN TOUR CI-DESSOUS	KAUFE UNTEN EINE DREHUNG	КУПИ ВРАЩЕНИЕ НИЖЕ	在下方购买转盘次数	下で購入できます	아래에서 구매하세요	اشترِ لفة بالأسفل	नीचे स्पिन खरीदें
+NONE LEFT		SIN GIROS	ACABOU	PLUS RIEN	KEINE MEHR	ЗАКОНЧИЛИСЬ	已用完	残りなし	남은 횟수 없음	لا يوجد	ख़त्म
+WATCH AD		VER ANUNCIO	VER ANÚNCIO	VOIR PUB	WERBUNG ANSEHEN	СМОТРЕТЬ РЕКЛАМУ	看广告	広告を見る	광고 보기	شاهد إعلاناً	विज्ञापन देखें
+AD USED		ANUNCIO USADO	ANÚNCIO USADO	PUB UTILISÉE	WERBUNG GENUTZT	РЕКЛАМА ПРОСМОТРЕНА	广告已使用	広告は使用済み	광고 시청 완료	استُخدم الإعلان	विज्ञापन इस्तेमाल हुआ
+AD SPIN USED TODAY		GIRO POR ANUNCIO YA USADO HOY	GIRO POR ANÚNCIO JÁ USADO HOJE	TOUR PUB DU JOUR UTILISÉ	WERBE-DREHUNG HEUTE GENUTZT	СЕГОДНЯ УЖЕ ИСПОЛЬЗОВАНО	今日广告次数已用完	今日の広告スピンは使用済み	오늘 광고 시청 완료	استُخدمت لفة الإعلان اليوم	आज का विज्ञापन स्पिन हो गया
+LOADING AD...		CARGANDO ANUNCIO...	CARREGANDO ANÚNCIO...	CHARGEMENT DE LA PUB...	WERBUNG LÄDT...	ЗАГРУЗКА РЕКЛАМЫ...	广告加载中...	広告を読み込み中...	광고 불러오는 중...	جارٍ تحميل الإعلان...	विज्ञापन लोड हो रहा है...
++1 SPIN		+1 GIRO	+1 GIRO	+1 TOUR	+1 DREHUNG	+1 ВРАЩЕНИЕ	+1 次	+1回	+1회	+1 لفة	+1 स्पिन
+NO AD AVAILABLE		NO HAY ANUNCIOS	SEM ANÚNCIO DISPONÍVEL	AUCUNE PUB DISPONIBLE	KEINE WERBUNG VERFÜGBAR	НЕТ РЕКЛАМЫ	暂无广告	広告がありません	광고가 없어요	لا يوجد إعلان	कोई विज्ञापन नहीं
+NOT ENOUGH TIRES		NEUMÁTICOS INSUFICIENTES	PNEUS INSUFICIENTES	PAS ASSEZ DE PNEUS	NICHT GENUG REIFEN	НЕ ХВАТАЕТ ШИН	轮胎不足	タイヤが足りない	타이어 부족	الإطارات غير كافية	टायर कम हैं
++{0} TIRES		+{0} NEUMÁTICOS	+{0} PNEUS	+{0} PNEUS	+{0} REIFEN	+{0} ШИН	+{0} 轮胎	タイヤ+{0}	타이어 +{0}	+{0} إطار	+{0} टायर
++{0} {1}		+{0} {1}	+{0} {1}	+{0} {1}	+{0} {1}	+{0} {1}	+{0} {1}	{1}+{0}	{1} +{0}	+{0} {1}	+{0} {1}
+JACKPOT!  +25000 COINS		PREMIO GORDO  +25000 MONEDAS	JACKPOT!  +25000 MOEDAS	JACKPOT !  +25000 PIÈCES	JACKPOT!  +25000 MÜNZEN	ДЖЕКПОТ!  +25000 МОНЕТ	大奖！ +25000 金币	大当たり！ コイン+25000	잭팟! 코인 +25000	الجائزة الكبرى!  +25000 عملة	जैकपॉट!  +25000 सिक्के
+JACKPOT!  {0}		PREMIO GORDO  {0}	JACKPOT!  {0}	JACKPOT !  {0}	JACKPOT!  {0}	ДЖЕКПОТ!  {0}	大奖！ {0}	大当たり！ {0}	잭팟! {0}	الجائزة الكبرى!  {0}	जैकपॉट!  {0}
+MYSTERY BOX		CAJA MISTERIOSA	CAIXA MISTERIOSA	BOÎTE MYSTÈRE	MYSTERY-BOX	ЯЩИК-СЮРПРИЗ	神秘宝箱	ミステリーボックス	미스터리 박스	الصندوق الغامض	मिस्ट्री बॉक्स
+OPEN BOX  {0}		ABRIR CAJA  {0}	ABRIR CAIXA  {0}	OUVRIR  {0}	ÖFFNEN  {0}	ОТКРЫТЬ  {0}	开箱  {0}	開ける  {0}	열기  {0}	افتح  {0}	खोलें  {0}
+TOKEN BOX		CAJA DE FICHAS	CAIXA DE FICHAS	BOÎTE À JETONS	TOKEN-BOX	ЯЩИК ЖЕТОНОВ	代币宝箱	トークンボックス	토큰 박스	صندوق الرموز	टोकन बॉक्स
+OPEN  {0}		ABRIR  {0}	ABRIR  {0}	OUVRIR  {0}	ÖFFNEN  {0}	ОТКРЫТЬ  {0}	打开  {0}	開ける  {0}	열기  {0}	افتح  {0}	खोलें  {0}
+TIRES		NEUMÁTICOS	PNEUS	PNEUS	REIFEN	ШИНЫ	轮胎	タイヤ	타이어	الإطارات	टायर
+NOT ENOUGH COINS		MONEDAS INSUFICIENTES	MOEDAS INSUFICIENTES	PAS ASSEZ DE PIÈCES	NICHT GENUG MÜNZEN	НЕ ХВАТАЕТ МОНЕТ	金币不足	コインが足りない	코인 부족	العملات غير كافية	सिक्के कम हैं
++{0} COINS!		+{0} MONEDAS	+{0} MOEDAS!	+{0} PIÈCES !	+{0} MÜNZEN!	+{0} МОНЕТ!	+{0} 金币！	コイン+{0}！	코인 +{0}!	+{0} عملة!	+{0} सिक्के!
++{0} TIRES!		+{0} NEUMÁTICOS	+{0} PNEUS!	+{0} PNEUS !	+{0} REIFEN!	+{0} ШИН!	+{0} 轮胎！	タイヤ+{0}！	타이어 +{0}!	+{0} إطار!	+{0} टायर!
+RARE!  +{0} COINS!		RARO  +{0} MONEDAS	RARO!  +{0} MOEDAS!	RARE !  +{0} PIÈCES !	SELTEN!  +{0} MÜNZEN!	РЕДКОСТЬ!  +{0} МОНЕТ!	稀有！ +{0} 金币！	レア！ コイン+{0}！	레어! 코인 +{0}!	نادر!  +{0} عملة!	दुर्लभ!  +{0} सिक्के!
+JACKPOT!  +{0} TIRES!		PREMIO GORDO  +{0} NEUMÁTICOS	JACKPOT!  +{0} PNEUS!	JACKPOT !  +{0} PNEUS !	JACKPOT!  +{0} REIFEN!	ДЖЕКПОТ!  +{0} ШИН!	大奖！ +{0} 轮胎！	大当たり！ タイヤ+{0}！	잭팟! 타이어 +{0}!	الجائزة الكبرى!  +{0} إطار!	जैकपॉट!  +{0} टायर!
++{0} {1}!		+{0} {1}	+{0} {1}!	+{0} {1} !	+{0} {1}!	+{0} {1}!	+{0} {1}！	{1}+{0}！	{1} +{0}!	+{0} {1}!	+{0} {1}!
+TAP TO OPEN		TOCA PARA ABRIR	TOQUE PARA ABRIR	TOUCHE POUR OUVRIR	TIPPEN ZUM ÖFFNEN	НАЖМИ, ЧТОБЫ ОТКРЫТЬ	点击打开	タップして開ける	탭하여 열기	اضغط للفتح	खोलने के लिए टैप करें
+CARS		AUTOS	CARROS	VOITURES	AUTOS	МАШИНЫ	赛车	車	자동차	السيارات	कारें
+PAINT		PINTURA	PINTURA	PEINTURE	LACK	ПОКРАСКА	涂装	塗装	도색	الطلاء	पेंट
+PREV		ANTERIOR	ANTERIOR	PRÉC.	VORIGES	ПРЕД.	上一辆	前へ	이전	السابق	पिछली
+NEXT		SIGUIENTE	PRÓXIMO	SUIV.	NÄCHSTES	СЛЕД.	下一辆	次へ	다음	التالي	अगली
+BODY		CARROCERÍA	CARROCERIA	CARROSSERIE	KAROSSERIE	КУЗОВ	车身	ボディ	차체	الهيكل	बॉडी
+WHEELS		RUEDAS	RODAS	ROUES	FELGEN	КОЛЁСА	车轮	ホイール	휠	العجلات	पहिये
+RESET		RESTABLECER	REDEFINIR	RÉINITIALISER	ZURÜCKSETZEN	СБРОС	重置	リセット	초기화	إعادة ضبط	रीसेट
+COMING SOON		PRÓXIMAMENTE	EM BREVE	BIENTÔT	DEMNÄCHST	СКОРО	敬请期待	近日公開	곧 출시	قريباً	जल्द आ रहा है
+PAINT YOUR CAR AND WHEELS		PINTA TU AUTO Y SUS RUEDAS	PINTE SEU CARRO E AS RODAS	PEINS TA VOITURE ET TES ROUES	LACKIERE AUTO UND FELGEN	ПОКРАСЬ МАШИНУ И КОЛЁСА	为你的车身和车轮涂装	車とホイールを塗装しよう	차와 휠을 칠해 보세요	لوّن سيارتك وعجلاتها	अपनी कार और पहिये पेंट करें
+STOCK		ORIGINAL	ORIGINAL	D'ORIGINE	STANDARD	СТОК	原厂	純正	기본	أصلي	मूल
+EQUIPPED		EQUIPADO	EQUIPADO	ÉQUIPÉE	AUSGERÜSTET	ВЫБРАНА	已装备	装備中	장착됨	مجهّزة	इस्तेमाल में
+OWNED		TUYO	SEU	ACQUISE	IM BESITZ	КУПЛЕНА	已拥有	所持	보유 중	مملوكة	आपकी
+SELECT		ELEGIR	ESCOLHER	CHOISIR	WÄHLEN	ВЫБРАТЬ	选择	選ぶ	선택	اختر	चुनें
+NOT AVAILABLE		NO DISPONIBLE	INDISPONÍVEL	INDISPONIBLE	NICHT VERFÜGBAR	НЕДОСТУПНО	不可用	入手不可	구매 불가	غير متاحة	उपलब्ध नहीं
+LOCKED		BLOQUEADO	BLOQUEADO	VERROUILLÉE	GESPERRT	ЗАКРЫТО	未解锁	ロック中	잠김	مقفلة	लॉक
+BUY {0}		COMPRAR {0}	COMPRAR {0}	ACHETER {0}	KAUFEN {0}	КУПИТЬ {0}	购买 {0}	購入 {0}	구매 {0}	اشترِ {0}	{0} में खरीदें
+LOG IN 7 DAYS IN A ROW		ENTRA 7 DÍAS SEGUIDOS	ENTRE 7 DIAS SEGUIDOS	CONNECTE-TOI 7 JOURS D'AFFILÉE	7 TAGE IN FOLGE EINLOGGEN	ЗАХОДИ 7 ДНЕЙ ПОДРЯД	连续登录 7 天	7日連続でログイン	7일 연속 출석	سجّل الدخول 7 أيام متتالية	लगातार 7 दिन लॉगिन करें
+BUY		COMPRAR	COMPRAR	ACHETER	KAUFEN	КУПИТЬ	购买	購入	구매	اشترِ	खरीदें
+NOT ENOUGH {0}		{0} INSUFICIENTES	{0} INSUFICIENTES	PAS ASSEZ DE {0}	NICHT GENUG {0}	НЕ ХВАТАЕТ: {0}	{0}不足	{0}が足りない	{0} 부족	{0} غير كافية	{0} कम हैं
+CRASHED!		ACCIDENTE	BATEU!	CRASH !	UNFALL!	АВАРИЯ!	撞车了！	クラッシュ！	충돌!	اصطدمت!	टक्कर!
+KEEP GOING?		CONTINUAR	CONTINUAR?	CONTINUER ?	WEITERFAHREN?	ПРОДОЛЖИТЬ?	继续吗？	続ける？	계속할까요?	متابعة؟	जारी रखें?
+AD		ANUNCIO	ANÚNCIO	PUB	WERBUNG	РЕКЛАМА	广告	広告	광고	إعلان	विज्ञापन
+GIVE UP		RENDIRSE	DESISTIR	ABANDONNER	AUFGEBEN	СДАТЬСЯ	放弃	あきらめる	포기	استسلم	छोड़ें
+REVIVE   {0}		REVIVIR   {0}	REVIVER   {0}	REPARTIR   {0}	WEITER   {0}	ВОЗРОДИТЬСЯ   {0}	复活   {0}	復活   {0}	부활   {0}	إحياء   {0}	रिवाइव   {0}
+NEED   {0}		NECESITAS   {0}	PRECISA   {0}	IL FAUT   {0}	DU BRAUCHST   {0}	НУЖНО   {0}	需要   {0}	必要   {0}	필요   {0}	تحتاج   {0}	चाहिए   {0}
+YOU HAVE {0}		TIENES {0}	VOCÊ TEM {0}	TU AS {0}	DU HAST {0}	У ТЕБЯ {0}	你有 {0}	所持 {0}	보유 {0}	لديك {0}	आपके पास {0}
+WATCH AD ({0} LEFT)		VER ANUNCIO (QUEDAN {0})	VER ANÚNCIO (RESTAM {0})	VOIR PUB ({0} RESTANTES)	WERBUNG ANSEHEN ({0} ÜBRIG)	РЕКЛАМА (ОСТАЛОСЬ {0})	看广告（剩余 {0} 次）	広告を見る（残り{0}）	광고 보기 ({0}회 남음)	شاهد إعلاناً (تبقّى {0})	विज्ञापन देखें ({0} बाकी)
+NO AD REVIVES LEFT		SIN ANUNCIOS PARA REVIVIR	SEM ANÚNCIOS PARA REVIVER	PLUS DE PUB POUR REPARTIR	KEINE WERBE-REVIVES MEHR	РЕКЛАМНЫЕ ВОЗРОЖДЕНИЯ ЗАКОНЧИЛИСЬ	广告复活次数已用完	広告復活は残りなし	광고 부활 횟수 없음	لا مزيد من الإحياء بالإعلانات	विज्ञापन रिवाइव ख़त्म
+REVIVED!		DE VUELTA	DE VOLTA!	C'EST REPARTI !	WEITER GEHT'S!	СНОВА В ИГРЕ!	复活了！	復活！	부활!	عدت!	वापस आ गए!
+OFF THE ROAD		FUERA DE LA PISTA	FORA DA PISTA	SORTIE DE ROUTE	STRASSE VERLASSEN	ВЫЛЕТ С ДОРОГИ	冲出赛道	コースアウト	도로 이탈	خارج الطريق	सड़क से बाहर
+CRASHED		CHOCASTE	BATEU	CRASH	CRASH	АВАРИЯ	撞车	クラッシュ	충돌	اصطدام	टक्कर
+SHIELD UP! STAY ON THE ROAD		ESCUDO ACTIVO, NO TE SALGAS	ESCUDO ATIVO! FIQUE NA PISTA	BOUCLIER ! RESTE SUR LA ROUTE	SCHILD AN! BLEIB AUF DER STRASSE	ЩИТ! ДЕРЖИСЬ ДОРОГИ	护盾开启！别冲出赛道	シールド！ コースアウト注意	보호막! 도로를 벗어나지 마세요	الدرع مفعّل! ابقَ على الطريق	शील्ड चालू! सड़क पर रहें
+DOUBLE COINS!		MONEDAS DOBLES	MOEDAS DOBRADAS!	PIÈCES DOUBLES !	DOPPELTE MÜNZEN!	ДВОЙНЫЕ МОНЕТЫ!	双倍金币！	コイン2倍！	코인 2배!	عملات مضاعفة!	दोगुने सिक्के!
+COIN MAGNET!		IMÁN DE MONEDAS	ÍMÃ DE MOEDAS!	AIMANT À PIÈCES !	MÜNZMAGNET!	МАГНИТ ДЛЯ МОНЕТ!	金币磁铁！	コインマグネット！	코인 자석!	مغناطيس العملات!	सिक्का चुंबक!
+DOUBLE SCORE!		PUNTOS DOBLES	PONTOS DOBRADOS!	SCORE DOUBLE !	DOPPELTE PUNKTE!	ДВОЙНЫЕ ОЧКИ!	双倍得分！	スコア2倍！	점수 2배!	نقاط مضاعفة!	दोगुना स्कोर!
+SPRINGS! SWIPE UP TO JUMP		RESORTES: DESLIZA ARRIBA PARA SALTAR	MOLAS! DESLIZE PARA CIMA PARA PULAR	RESSORTS ! GLISSE VERS LE HAUT	FEDERN! ZUM SPRINGEN HOCHWISCHEN	ПРУЖИНЫ! СВАЙП ВВЕРХ ДЛЯ ПРЫЖКА	弹簧！上滑跳跃	スプリング！上にスワイプでジャンプ	스프링! 위로 밀어 점프	نوابض! اسحب لأعلى للقفز	स्प्रिंग! कूदने के लिए ऊपर स्वाइप करें
+SMASH!		ZAS	PANCADA!	BAM !	KRACH!	БАХ!	撞飞！	粉砕！	박살!	تحطيم!	धमाका!
++1 TIRE!		+1 NEUMÁTICO	+1 PNEU!	+1 PNEU !	+1 REIFEN!	+1 ШИНА!	+1 轮胎！	タイヤ+1！	타이어 +1!	+1 إطار!	+1 टायर!
++{0} DRIFT COMBO		+{0} COMBO DE DERRAPE	+{0} COMBO DE DRIFT	+{0} COMBO DÉRAPAGE	+{0} DRIFT-KOMBO	+{0} ДРИФТ-КОМБО	+{0} 漂移连击	+{0} ドリフトコンボ	+{0} 드리프트 콤보	+{0} كومبو انجراف	+{0} ड्रिफ्ट कॉम्बो
++{0} NEAR MISS		+{0} CASI CHOQUE	+{0} QUASE-BATIDA	+{0} FRÔLEMENT	+{0} BEINAHE-CRASH	+{0} ОПАСНЫЙ ОБГОН	+{0} 擦身而过	+{0} ニアミス	+{0} 아슬아슬	+{0} تجاوز خطير	+{0} बाल-बाल बचे
+OIL SPILL!		ACEITE	ÓLEO!	HUILE !	ÖL!	МАСЛО!	油渍！	オイル！	기름!	زيت!	तेल!
+RUN COINS {0}		MONEDAS {0}	MOEDAS {0}	PIÈCES {0}	MÜNZEN {0}	МОНЕТЫ {0}	本局金币 {0}	コイン {0}	코인 {0}	عملات الجولة {0}	सिक्के {0}
+DRIFT X{0}		DERRAPE X{0}	DRIFT X{0}	DÉRAPAGE X{0}	DRIFT X{0}	ДРИФТ X{0}	漂移 X{0}	ドリフト X{0}	드리프트 X{0}	انجراف X{0}	ड्रिफ्ट X{0}
+DRIFT x1		DERRAPE X1	DRIFT X1	DÉRAPAGE X1	DRIFT X1	ДРИФТ X1	漂移 X1	ドリフト X1	드리프트 X1	انجراف X1	ड्रिफ्ट X1
+PAUSE		PAUSA	PAUSA	PAUSE	PAUSE	ПАУЗА	暂停	一時停止	일시정지	إيقاف مؤقت	रोकें
+PAUSED		EN PAUSA	PAUSADO	EN PAUSE	PAUSIERT	ПАУЗА	已暂停	一時停止中	일시정지됨	متوقف مؤقتاً	रुका हुआ
+RESUME		SEGUIR	CONTINUAR	REPRENDRE	WEITER	ПРОДОЛЖИТЬ	继续	再開	계속	استئناف	जारी रखें
+MENU		MENÚ	MENU	MENU	MENÜ	МЕНЮ	菜单	メニュー	메뉴	القائمة	मेन्यू
+HOW TO PLAY		CÓMO JUGAR	COMO JOGAR	COMMENT JOUER	SO WIRD GESPIELT	КАК ИГРАТЬ	玩法说明	遊び方	플레이 방법	طريقة اللعب	कैसे खेलें
+SLIDE TO STEER		DESLIZA PARA GIRAR	DESLIZE PARA VIRAR	GLISSE POUR DIRIGER	ZIEHEN ZUM LENKEN	РУЛИ ПАЛЬЦЕМ	滑动转向	スライドで操作	밀어서 조종	اسحب للتوجيه	मोड़ने के लिए खिसकाएँ
+HOLD IT TO DRIFT		MANTÉN PARA DERRAPAR	SEGURE PARA DERRAPAR	MAINTIENS POUR DÉRAPER	HALTEN ZUM DRIFTEN	ДЕРЖИ ДЛЯ ДРИФТА	按住漂移	キープでドリフト	유지하면 드리프트	واصل السحب للانجراف	ड्रिफ्ट के लिए पकड़े रहें
+SWIPE TO JUMP		DESLIZA PARA SALTAR	DESLIZE PARA PULAR	GLISSE POUR SAUTER	WISCHEN ZUM SPRINGEN	СВАЙП ДЛЯ ПРЫЖКА	上滑跳跃	スワイプでジャンプ	위로 밀어 점프	اسحب لأعلى للقفز	कूदने के लिए स्वाइप करें
+KEEP IT CLEAN		SIN CHOQUES	SEM BATIDAS	SANS CASSE	SAUBER FAHREN	БЕЗ АВАРИЙ	别撞车	ぶつからないで	충돌 없이	بلا اصطدام	टक्कर से बचें
+Slide your thumb anywhere\non screen. No buttons.		Desliza el pulgar en cualquier\nparte de la pantalla. Sin botones.	Deslize o polegar em qualquer\nlugar da tela. Sem botões.	Glisse ton pouce n'importe où\nsur l'écran. Aucun bouton.	Zieh den Daumen irgendwo\nüber den Bildschirm. Keine Tasten.	Веди пальцем в любом месте\nэкрана. Никаких кнопок.	在屏幕任意位置滑动拇指，\n无需按键。	画面のどこでも親指をスライド。\nボタンは不要。	화면 아무 곳에서나 엄지를 밀어요.\n버튼은 없어요.	حرّك إبهامك في أي مكان\nعلى الشاشة. بلا أزرار.	स्क्रीन पर कहीं भी अंगूठा\nखिसकाएँ। कोई बटन नहीं।
+Stay on the slide through a\ncorner and the tail steps out.		Sigue deslizando en la curva\ny la parte trasera derrapará.	Continue deslizando na curva\ne a traseira escorrega.	Glisse tout le long du virage\net l'arrière décroche.	Zieh weiter durch die Kurve\nund das Heck bricht aus.	Держи палец в повороте,\nи машину занесёт.	过弯时保持滑动，\n车尾就会甩出去。	カーブでスライドし続けると\n車体がドリフトする。	코너에서 계속 밀고 있으면\n뒤가 미끄러져요.	استمر في السحب عند المنعطف\nوستنزلق مؤخرة السيارة.	मोड़ पर खिसकाते रहें और\nकार का पिछला हिस्सा फिसलेगा।
+With springs, flick your\nthumb up to hop over things.		Con resortes, desliza el pulgar\nhacia arriba para saltar.	Com molas, deslize o polegar\npara cima para pular.	Avec les ressorts, glisse vers\nle haut pour sauter.	Mit Federn wischst du nach oben,\num über Dinge zu springen.	С пружинами смахни пальцем\nвверх, чтобы перепрыгнуть.	有弹簧时，向上滑动拇指\n即可跳过障碍。	スプリング中は親指を上に弾いて\n障害物を飛び越えよう。	스프링이 있을 땐 엄지를 위로\n튕겨 장애물을 넘어요.	مع النوابض، اسحب إبهامك\nلأعلى لتقفز فوق العوائق.	स्प्रिंग के साथ अंगूठा ऊपर\nझटककर चीज़ों के ऊपर से कूदें।
+Drifts and near misses build\nyour combo. Crashing ends it.		Los derrapes y casi choques suben tu combo.\nChocar lo termina.	Drifts e quase-batidas aumentam\no combo. Bater acaba com ele.	Dérapages et frôlements font\nmonter le combo. Un crash l'arrête.	Drifts und Beinahe-Crashs bauen die\nKombo auf. Ein Unfall beendet sie.	Дрифт и опасные обгоны увеличивают\nкомбо. Авария его обнуляет.	漂移和擦身而过能累积连击，\n撞车就会中断。	ドリフトとニアミスでコンボが増える。\nクラッシュで終了。	드리프트와 아슬아슬 회피로 콤보를\n쌓고, 충돌하면 끝나요.	الانجراف والتجاوزات الخطيرة يبنيان\nالكومبو، والاصطدام ينهيه.	ड्रिफ्ट और बाल-बाल बचना कॉम्बो\nबढ़ाते हैं। टक्कर उसे ख़त्म करती है।
+LET'S DRIVE		A CONDUCIR	VAMOS DIRIGIR	C'EST PARTI	LOS GEHT'S	ПОЕХАЛИ	出发吧	走り出そう	달려 보자	هيا ننطلق	चलो चलें
+HOLD IT THROUGH THE CORNER		MANTÉN EN LA CURVA	SEGURE NA CURVA	MAINTIENS DANS LE VIRAGE	DURCH DIE KURVE HALTEN	ДЕРЖИ В ПОВОРОТЕ	过弯时保持住	カーブの間キープ	코너 내내 유지	واصل السحب في المنعطف	पूरे मोड़ में पकड़े रहें
+NICE - THAT'S A DRIFT		BIEN, ESO ES UN DERRAPE	BOA - ISSO É UM DRIFT	BIEN - C'EST UN DÉRAPAGE	SUPER - DAS IST EIN DRIFT	ОТЛИЧНО! ЭТО ДРИФТ	漂亮，这就是漂移	ナイス！ それがドリフト	좋아요 - 그게 드리프트예요	رائع - هذا انجراف	बढ़िया - यही ड्रिफ्ट है
+GRAB COINS, DODGE THE REST		TOMA MONEDAS, ESQUIVA LO DEMÁS	PEGUE MOEDAS, DESVIE DO RESTO	PRENDS LES PIÈCES, ÉVITE LE RESTE	MÜNZEN SAMMELN, DEM REST AUSWEICHEN	СОБИРАЙ МОНЕТЫ, ОБЪЕЗЖАЙ ОСТАЛЬНОЕ	吃金币，躲开障碍	コインを取って他はよけよう	코인은 먹고 나머지는 피해요	اجمع العملات وتفادَ الباقي	सिक्के लें, बाकी से बचें
+SCORE		PUNTOS	PONTOS	SCORE	PUNKTE	ОЧКИ	得分	スコア	점수	النقاط	स्कोर
+DISTANCE		DISTANCIA	DISTÂNCIA	DISTANCE	STRECKE	ДИСТАНЦИЯ	距离	距離	거리	المسافة	दूरी
+COINS COLLECTED		MONEDAS RECOGIDAS	MOEDAS COLETADAS	PIÈCES RAMASSÉES	GESAMMELTE MÜNZEN	СОБРАНО МОНЕТ	收集的金币	獲得コイン	모은 코인	العملات المجمّعة	जमा किए सिक्के
+BONUS		BONO	BÔNUS	BONUS	BONUS	БОНУС	奖励	ボーナス	보너스	مكافأة	बोनस
+RETRY		REINTENTAR	DE NOVO	REJOUER	NOCHMAL	ЕЩЁ РАЗ	再来一次	リトライ	다시 하기	أعد المحاولة	फिर से
+NEW PERSONAL BEST		NUEVO RÉCORD PERSONAL	NOVO RECORDE PESSOAL	NOUVEAU RECORD PERSO	NEUE BESTLEISTUNG	НОВЫЙ ЛИЧНЫЙ РЕКОРД	个人新纪录	自己ベスト更新	개인 최고 기록	رقم قياسي شخصي جديد	नया निजी रिकॉर्ड
+{0} M		{0} M	{0} M	{0} M	{0} M	{0} М	{0} 米	{0} m	{0} m	{0} م	{0} मी

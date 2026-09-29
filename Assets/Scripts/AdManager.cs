@@ -109,6 +109,8 @@ public class AdManager : MonoBehaviour
     bool rewardPending;              // this view has earned the reward
     Action pendingReward;
     Action pendingUnavailable;
+    bool showing;                    // an ad is up, or its result is still on its way
+    bool adClosed;                   // the ad has closed
 
     void Begin()
     {
@@ -126,11 +128,16 @@ public class AdManager : MonoBehaviour
         rewarded.OnAdLoadFailed += _ => { rewardedLoaded = false; Invoke(nameof(Reload), 20f); };
         rewarded.OnAdDisplayed += _ => rewardedLoaded = false;
 
-        // the only place a reward is ever recorded
-        rewarded.OnAdRewarded += (_, __) => rewardPending = true;
+        // the only place a reward is ever recorded. It can arrive before OR
+        // after the ad closes, so if the ad is already gone, pay out now.
+        rewarded.OnAdRewarded += (_, __) =>
+        {
+            rewardPending = true;
+            if (adClosed) Finish();
+        };
 
-        rewarded.OnAdClosed += _ => Finish();
-        rewarded.OnAdDisplayFailed += (_, __) => Finish();
+        rewarded.OnAdClosed += _ => AdClosed();
+        rewarded.OnAdDisplayFailed += (_, __) => AdClosed();
 
         Reload();
     }
@@ -157,14 +164,39 @@ public class AdManager : MonoBehaviour
         pendingReward = onReward;
         pendingUnavailable = onUnavailable;
         rewardPending = false;
+        showing = true;
+        adClosed = false;
+        StopAllCoroutines();
         BeginAdBreak();
         rewarded.ShowAd(placement);
     }
 
-    /// <summary>The ad closed, one way or another. Pay out only if it earned it.</summary>
+    /// <summary>
+    /// The ad closed, one way or another. If the reward has not arrived yet,
+    /// give it a moment - LevelPlay can report the reward after the close.
+    /// </summary>
+    void AdClosed()
+    {
+        if (!showing || adClosed) return;
+        adClosed = true;
+        EndAdBreak();
+
+        if (rewardPending) Finish();
+        else StartCoroutine(WaitForLateReward());
+    }
+
+    System.Collections.IEnumerator WaitForLateReward()
+    {
+        // real time: the game behind the ad may be paused
+        yield return new WaitForSecondsRealtime(2f);
+        Finish();
+    }
+
+    /// <summary>Pay out if the ad earned it - once, whichever way it ended.</summary>
     void Finish()
     {
-        EndAdBreak();
+        if (!showing) return;            // already settled
+        showing = false;
 
         Action reward = pendingReward;
         Action missed = pendingUnavailable;
