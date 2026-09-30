@@ -9,7 +9,7 @@ using UnityEngine.Rendering.Universal;
 /// Builds its own UI at runtime, so the only scene setup needed is:
 /// an empty GameObject with this component, and a PlayerCar with CarController.
 /// </summary>
-public class GameManager : MonoBehaviour
+public partial class GameManager : MonoBehaviour
 {
     enum State { Menu, Playing, Paused, Rewinding, ReviveOffer, GameOver }
     enum Mode { Endless, Race }
@@ -498,18 +498,37 @@ public class GameManager : MonoBehaviour
     static int RewardCarIndex { get { return Cars.Length - 1; } }
 
     // ------------------------------------------------------- daily login
-    static readonly int[] LoginRewards = { 100, 150, 200, 250, 300, 400, 500 };
+    /// <summary>What a day of the week's streak gives.</summary>
+    enum LoginPrize { MysteryBox, Coins, TokenBox, Spin, Car }
+    static readonly LoginPrize[] LoginPrizes =
+    {
+        LoginPrize.MysteryBox, LoginPrize.Coins, LoginPrize.TokenBox, LoginPrize.Coins,
+        LoginPrize.Spin, LoginPrize.Coins, LoginPrize.Car,
+    };
+    // coins on the coin days; day 7's pays out only if the car is already yours
+    static readonly int[] LoginRewards = { 0, 200, 0, 300, 0, 500, 1000 };
+    const string LoginCarWonKey = "LoginCarWon";   // the date day 7 handed the car over
     bool loginPending;
     bool loginUnlocksCar;
     int loginStreakNew;
     int loginRewardCoins;
     GameObject loginPanel;
-    Text loginDayText, loginRewardText, loginCarText;
+    Text loginDayText, loginRewardText;
     readonly Image[] loginCells = new Image[7];
     readonly Text[] loginCellTexts = new Text[7];
     readonly RawImage[] loginCellIcons = new RawImage[7];
+    Image loginCellFrame, loginCarEdge;
+    RawImage loginCarRays;
+    int loginToday = -1;            // the cell that is today's, while it is unclaimed
     Text claimBtnLabel;
     bool loginAlreadyClaimed;
+    static readonly Vector2 LoginCellSize = new Vector2(310f, 300f);
+    static readonly Color LoginTodayColor = new Color(1f, 0.58f, 0.12f);
+    static readonly Color LoginDoneColor = new Color(0.24f, 0.58f, 0.32f);
+    static readonly Color LoginAheadColor = new Color(0.30f, 0.25f, 0.46f);
+    static readonly Color LoginCarAheadColor = new Color(0.27f, 0.20f, 0.52f);
+    /// <summary>The menu's LOGIN STREAK yellow - the same as SPIN's.</summary>
+    static readonly Color LoginYellow = new Color(1f, 0.78f, 0.12f);
 
     // off-screen rigs that render the spinning coin / reward car into the popup cells
     const int ShowcaseLayer = 30;
@@ -542,6 +561,11 @@ public class GameManager : MonoBehaviour
         CarPaint.Enabled = !PaintLocked;
         // ads start loading now so the first one is ready when it is asked for
         AdManager.Init();
+        // real-money purchases: prices come from the store, paid packs are
+        // handed out here (also ones paid for before a crash or restart)
+        IapStore.Init();
+        IapStore.GrantHandler = GrantPurchase;
+        IapStore.PricesChanged += RefreshPackPrices;
         Application.targetFrameRate = 60;
         Screen.orientation = ScreenOrientation.Portrait; // ignored in editor, applies on device
         best = PlayerPrefs.GetInt("HighScore", 0);
@@ -560,9 +584,20 @@ public class GameManager : MonoBehaviour
         ComputeDailyLogin();
     }
 
+    static string TodayKey() { return System.DateTime.Now.ToString("yyyyMMdd"); }
+
+    /// <summary>Today's reward has not been collected yet.</summary>
+    static bool LoginRewardWaiting()
+    {
+        return PlayerPrefs.GetString("LastLogin", "") != TodayKey();
+    }
+
+    /// <summary>1-7: where a streak is in its week.</summary>
+    static int LoginDayOf(int streak) { return (Mathf.Max(1, streak) - 1) % 7 + 1; }
+
     void ComputeDailyLogin()
     {
-        string today = System.DateTime.Now.ToString("yyyyMMdd");
+        string today = TodayKey();
         string last = PlayerPrefs.GetString("LastLogin", "");
         if (last == today)
         {
@@ -578,7 +613,8 @@ public class GameManager : MonoBehaviour
         string yesterday = System.DateTime.Now.AddDays(-1).ToString("yyyyMMdd");
         int streak = PlayerPrefs.GetInt("LoginStreak", 0);
         loginStreakNew = last == yesterday ? streak + 1 : 1; // miss a day = start over
-        int day = (loginStreakNew - 1) % 7 + 1;
+        int day = LoginDayOf(loginStreakNew);
+        loginAlreadyClaimed = false;
         loginRewardCoins = LoginRewards[day - 1];
         loginUnlocksCar = day == 7 && !OwnedCar(RewardCarIndex);
         loginPending = true;
@@ -586,25 +622,228 @@ public class GameManager : MonoBehaviour
 
     void ClaimLogin()
     {
-        if (!loginAlreadyClaimed)
-        {
-            totalCoins += loginRewardCoins;
-            PlayerPrefs.SetInt("Coins", totalCoins);
-            PlayerPrefs.SetString("LastLogin", System.DateTime.Now.ToString("yyyyMMdd"));
-            PlayerPrefs.SetInt("LoginStreak", loginStreakNew);
-            if (loginUnlocksCar) PlayerPrefs.SetInt("CarOwned" + RewardCarIndex, 1);
-            PlayerPrefs.Save();
-            audioMan.PlayCoin();
-        }
-        else
+        loginPending = false;
+        if (loginAlreadyClaimed)
         {
             audioMan.PlayTap();
+            CloseLoginPopup();
+            return;
         }
 
-        loginPending = false;
-        loginPanel.SetActive(false);
-        if (showcaseRoot != null) showcaseRoot.SetActive(false);
+        int day = LoginDayOf(loginStreakNew);
+        PlayerPrefs.SetString("LastLogin", TodayKey());
+        PlayerPrefs.SetInt("LoginStreak", loginStreakNew);
+        loginAlreadyClaimed = true;
+        CloseLoginPopup();
+
+        // every day of the week gives something different, and each one is
+        // handed over on its own full screen so it is seen arriving
+        switch (LoginPrizes[day - 1])
+        {
+            case LoginPrize.MysteryBox:
+                OpenMysteryBox();          // the shop's box screen, free today
+                break;
+            case LoginPrize.TokenBox:
+                OpenTokenBox();
+                break;
+            case LoginPrize.Spin:
+                SpinsLeft = SpinsLeft + 1;
+                RefreshSpinBadge();
+                ShowPrizeReveal(Loc.T("+1 SPIN"), false, null, wheelFaceTex);
+                break;
+            case LoginPrize.Car when loginUnlocksCar:
+                PlayerPrefs.SetInt("CarOwned" + RewardCarIndex, 1);
+                PlayerPrefs.SetString(LoginCarWonKey, TodayKey());
+                // the car keeps turning on its stand behind the reveal
+                BuildLoginShowcase();
+                showcaseRoot.SetActive(true);
+                ShowPrizeReveal(Loc.T("NEW CAR!"), false, null, rewardCarRT);
+                break;
+            default:
+                // the coin days, and day 7 once the car is already in the garage
+                totalCoins += loginRewardCoins;
+                PlayerPrefs.SetInt("Coins", totalCoins);
+                ShowPrizeReveal(Loc.F("+{0} COINS", loginRewardCoins), false, CoinIconPath);
+                break;
+        }
+        PlayerPrefs.Save();
         menuCoinsText.text = Loc.F("COINS  {0}", totalCoins);
+        RefreshLoginButton();
+    }
+
+    void CloseLoginPopup()
+    {
+        loginToday = -1;
+        if (loginPanel != null) loginPanel.SetActive(false);
+        if (showcaseRoot != null) showcaseRoot.SetActive(false);
+        // the shop's two boxes were only lit up for the week's cells
+        if (shopShowcaseRoot != null && (shopPanel == null || !shopPanel.activeSelf))
+            shopShowcaseRoot.SetActive(false);
+    }
+
+    /// <summary>The menu's LOGIN STREAK button: the week so far, and today's reward.</summary>
+    void OpenLoginStreak()
+    {
+        // in the tutorial it is only pointed at - the tap just moves it on
+        if (coachPhase != CoachPhase.None) { coachTapped = true; return; }
+        if (loginPanel == null || loginPanel.activeSelf) return;
+        ComputeDailyLogin();
+        ShowLoginPopup();
+    }
+
+    /// <summary>Fills in the daily reward popup and brings it up.</summary>
+    void ShowLoginPopup()
+    {
+        BuildLoginShowcase();
+        showcaseRoot.SetActive(true);
+        // the boxes in the week are the shop's own, drawn live
+        EnsureShopShowcase();
+        shopShowcaseRoot.SetActive(true);
+
+        int day = LoginDayOf(loginStreakNew);
+        loginDayText.text = Loc.F("DAY {0}", day)
+            + (loginStreakNew > 7 ? "  " + Loc.F("(STREAK {0})", loginStreakNew) : "");
+        loginRewardText.fontSize = Mathf.RoundToInt((loginAlreadyClaimed ? 44 : 62) * FontScale);
+        loginRewardText.text = loginAlreadyClaimed ? "COME BACK TOMORROW!" : LoginPrizeLine(day);
+        claimBtnLabel.text = loginAlreadyClaimed ? "OK" : "CLAIM";
+
+        // day 7 shows the car while there is a car to win (or it was won today)
+        bool showCar = !OwnedCar(RewardCarIndex)
+            || (loginAlreadyClaimed && day == 7 && PlayerPrefs.GetString(LoginCarWonKey, "") == TodayKey());
+
+        loginToday = loginAlreadyClaimed ? -1 : day - 1;
+        for (int i = 0; i < 7; i++)
+        {
+            bool current = i == loginToday;
+            bool past = i + 1 < day || (i + 1 == day && loginAlreadyClaimed);
+            loginCells[i].color = current ? LoginTodayColor : past ? LoginDoneColor
+                                : i == 6 ? LoginCarAheadColor : LoginAheadColor;
+            loginCells[i].rectTransform.localScale = Vector3.one;
+            loginCellTexts[i].color = Color.white;
+
+            RawImage icon = loginCellIcons[i];
+            LoginPrize prize = LoginPrizes[i];
+            bool box = prize == LoginPrize.MysteryBox || prize == LoginPrize.TokenBox;
+            icon.texture = LoginPicture(prize, showCar);
+            // the box cameras frame the lid swinging open too - close in on the box
+            icon.uvRect = box ? new Rect(0.15f, 0.05f, 0.7f, 0.7f) : new Rect(0f, 0f, 1f, 1f);
+            icon.color = new Color(1f, 1f, 1f, past ? 0.6f : 1f);
+        }
+        // the car is not named - which one it is, is the surprise
+        loginCellTexts[6].text = showCar ? Loc.T("NEW CAR!") : Loc.F("+{0} COINS", LoginRewards[6]);
+        // the coins line is wider than NEW CAR!
+        loginCellTexts[6].fontSize = Mathf.RoundToInt((showCar ? 66 : 50) * FontScale
+                                                      * Loc.SizeScale(Loc.Current));
+        if (loginCarRays != null) loginCarRays.gameObject.SetActive(showCar);
+        loginCarEdge.rectTransform.localScale = Vector3.one;
+
+        // today's cell wears a gold frame (day 7 always has its own)
+        bool framed = loginToday >= 0 && loginToday < 6;
+        loginCellFrame.gameObject.SetActive(framed);
+        if (framed)
+        {
+            loginCellFrame.rectTransform.anchoredPosition =
+                loginCells[loginToday].rectTransform.anchoredPosition;
+            loginCellFrame.rectTransform.localScale = Vector3.one;
+        }
+
+        loginPanel.SetActive(true);
+        if (audioMan != null) audioMan.PlayPop();
+        RefreshLoginButton();
+    }
+
+    /// <summary>The picture in a day's cell.</summary>
+    Texture LoginPicture(LoginPrize prize, bool showCar)
+    {
+        switch (prize)
+        {
+            case LoginPrize.MysteryBox: return toolboxRT;
+            case LoginPrize.TokenBox: return tokenBoxRT;
+            case LoginPrize.Spin: return wheelFaceTex;
+            case LoginPrize.Car when showCar: return rewardCarRT;
+            default: return Resources.Load<Texture2D>(CoinIconPath);
+        }
+    }
+
+    /// <summary>The big line under the week: what today gives.</summary>
+    string LoginPrizeLine(int day)
+    {
+        switch (LoginPrizes[day - 1])
+        {
+            case LoginPrize.MysteryBox: return Loc.T("MYSTERY BOX");
+            case LoginPrize.TokenBox: return Loc.T("TOKEN BOX");
+            case LoginPrize.Spin: return Loc.T("+1 SPIN");
+            case LoginPrize.Car when loginUnlocksCar:
+                return Loc.T("NEW CAR!");
+            default: return Loc.F("+{0} COINS", loginRewardCoins);
+        }
+    }
+
+    /// <summary>The label under a day's picture (days 1-6).</summary>
+    static string LoginCellCaption(int index)
+    {
+        switch (LoginPrizes[index])
+        {
+            case LoginPrize.MysteryBox: return "MYSTERY BOX";
+            case LoginPrize.TokenBox: return "TOKEN BOX";
+            case LoginPrize.Spin: return "+1 SPIN";
+            default: return "+" + LoginRewards[index];
+        }
+    }
+
+    /// <summary>Today's cell breathes, and the rays behind the car turn.</summary>
+    void TickLoginPopup()
+    {
+        if (loginPanel == null || !loginPanel.activeSelf) return;
+        float t = Time.unscaledTime;
+        if (loginCarRays != null && loginCarRays.gameObject.activeSelf)
+            loginCarRays.rectTransform.localRotation = Quaternion.Euler(0f, 0f, -t * 16f);
+        if (loginToday < 0) return;
+        Vector3 s = Vector3.one * (1f + Mathf.Sin(t * 4f) * 0.035f);
+        loginCells[loginToday].rectTransform.localScale = s;
+        if (loginToday < 6) loginCellFrame.rectTransform.localScale = s;
+        else loginCarEdge.rectTransform.localScale = s;
+    }
+
+    // ---- the menu's LOGIN STREAK button: yellow, bouncing and dotted while
+    //      today's reward waits, like SPIN is while a spin does
+    Text loginMenuLabel;
+    GameObject loginButtonGo, loginBadge;
+    RectTransform loginButtonRt;
+    Vector2 loginButtonHome;
+    bool loginButtonLive;
+    float loginButtonCheckT;
+
+    void RefreshLoginButton()
+    {
+        if (loginButtonRt == null) return;
+        loginButtonLive = LoginRewardWaiting();
+        loginButtonCheckT = 0f;
+        if (loginBadge != null) loginBadge.SetActive(loginButtonLive);
+        var img = loginButtonRt.GetComponent<Image>();
+        if (img != null) img.color = loginButtonLive ? LoginYellow : new Color(0.35f, 0.32f, 0.45f);
+        loginMenuLabel.color = Color.white;
+        if (!loginButtonLive)
+        {
+            loginButtonRt.anchoredPosition = loginButtonHome;
+            loginButtonRt.localScale = Vector3.one;
+            loginButtonRt.localRotation = Quaternion.identity;
+        }
+    }
+
+    void AnimateLoginButton()
+    {
+        if (loginButtonRt == null) return;
+        // midnight can pass with the game open: look again now and then
+        loginButtonCheckT += Time.unscaledDeltaTime;
+        if (loginButtonCheckT > 1f)
+        {
+            loginButtonCheckT = 0f;
+            if (LoginRewardWaiting() != loginButtonLive) RefreshLoginButton();
+        }
+        if (!loginButtonLive) return;
+        // half a beat after SPIN's, so the two take turns
+        BounceButton(loginButtonRt, loginButtonHome, 1.3f);
     }
 
     void Start()
@@ -746,6 +985,20 @@ public class GameManager : MonoBehaviour
         return img;
     }
 
+
+    /// <summary>A picture in a daily reward cell (filled in when the popup opens).</summary>
+    RawImage MakeLoginPicture(Transform parent, Vector2 at, float size)
+    {
+        var go = new GameObject("Icon");
+        go.transform.SetParent(parent, false);
+        var img = go.AddComponent<RawImage>();
+        img.raycastTarget = false;
+        var rt = img.rectTransform;
+        rt.anchorMin = rt.anchorMax = rt.pivot = new Vector2(0.5f, 0.5f);
+        rt.anchoredPosition = at;
+        rt.sizeDelta = new Vector2(size, size);
+        return img;
+    }
 
     static void SetLayerRecursively(GameObject go, int layer)
     {
@@ -1036,6 +1289,8 @@ public class GameManager : MonoBehaviour
         state = State.Menu;
         Time.timeScale = 1f;
         EndTutorialHints();
+        tutorialOnly = false;
+        CancelInvoke(nameof(FinishTutorialOnly));
 
         // the wreck does not follow you into the lobby
         if (car != null && car.IsScorched)
@@ -1057,6 +1312,7 @@ public class GameManager : MonoBehaviour
         if (wheelPanel != null) wheelPanel.SetActive(false);
         if (racePanel != null) racePanel.SetActive(false);
         RefreshSpinBadge();
+        RefreshLoginButton();
         ClearGaragePreview();
 
         EndFinishCinematic();
@@ -1074,42 +1330,16 @@ public class GameManager : MonoBehaviour
         ResetBiome();
         menuCoinsText.text = Loc.F("COINS  {0}", totalCoins);
 
+        // a new day since the game was opened (it was left running
+        // overnight): that day's reward is waiting too
+        if (!loginPending && LoginRewardWaiting()) ComputeDailyLogin();
+
         // the daily reward waits until the opening sequence has finished
-        if (loginPending && !introRunning)
+        if (loginPending && !introRunning && !CoachHoldsLogin)
         {
-            BuildLoginShowcase();
-            showcaseRoot.SetActive(true);
-
-            int day = (loginStreakNew - 1) % 7 + 1;
-            loginDayText.text = Loc.F("DAY {0}", day)
-                + (loginStreakNew > 7 ? "  " + Loc.F("(STREAK {0})", loginStreakNew) : "");
-            loginRewardText.fontSize = Mathf.RoundToInt((loginAlreadyClaimed ? 36 : 56) * FontScale);
-            loginRewardText.text = loginAlreadyClaimed ? "COME BACK TOMORROW!"
-                                                       : Loc.F("+{0} COINS", loginRewardCoins);
-            loginCarText.gameObject.SetActive(loginUnlocksCar);
-            if (loginUnlocksCar) loginCarText.text = Loc.F("NEW CAR!\n{0}", Cars[RewardCarIndex].name);
-            claimBtnLabel.text = loginAlreadyClaimed ? "OK" : "CLAIM";
-
-            bool rewardOwned = OwnedCar(RewardCarIndex);
-            for (int i = 0; i < 7; i++)
-            {
-                // on a claimed day, today counts as done (green)
-                bool current = i + 1 == day && !loginAlreadyClaimed;
-                bool past = i + 1 < day || (i + 1 == day && loginAlreadyClaimed);
-                loginCells[i].color = current ? new Color(1f, 0.6f, 0.15f)
-                                    : past ? new Color(0.3f, 0.62f, 0.35f)
-                                    : new Color(0.24f, 0.19f, 0.36f);
-                loginCellTexts[i].color = current ? Color.white
-                                        : new Color(1f, 1f, 1f, past ? 0.75f : 0.55f);
-                loginCellIcons[i].texture = (i == 6 && !rewardOwned)
-                    ? (Texture)rewardCarRT : Resources.Load<Texture2D>(CoinIconPath);
-            }
-            loginCellTexts[6].text = rewardOwned ? "+500" : "CAR";
-
-            loginPanel.SetActive(true);
-            if (audioMan != null) audioMan.PlayPop();
+            if (!loginPanel.activeSelf) ShowLoginPopup();
         }
-        else if (showcaseRoot != null)
+        else if (showcaseRoot != null && !loginPanel.activeSelf)
         {
             showcaseRoot.SetActive(false);
         }
@@ -1142,9 +1372,8 @@ public class GameManager : MonoBehaviour
         if (state != State.Playing) return;
         state = State.Paused;
         Time.timeScale = 0f;
-        // compact single-line-per-quest version (strip the big size tags)
-        pauseQuestText.text =
-            CompactQuestLine(0) + "\n" + CompactQuestLine(1) + "\n" + CompactQuestLine(2);
+        // the same lines, at the same size, as the quests window
+        for (int i = 0; i < 3; i++) pauseQuestRows[i].text = QuestLine(i);
         pausePanel.SetActive(true);
         pauseButton.SetActive(false);
         audioMan.StopDriving(); // engine/skid fade out, music keeps playing
@@ -1316,7 +1545,7 @@ public class GameManager : MonoBehaviour
     GameObject questsPanel, revivePanel, shopPanel, creditsPanel, unlockPanel;
     InputField unlockInput;
     Text unlockMsg;
-    Text storeCoinsText, storeTiresText, boxResultText;
+    Text boxResultText;
     const int MysteryBoxCost = 500;
 
     // shop 3D showcase: animated toolbox + tire stack icons
@@ -1333,6 +1562,12 @@ public class GameManager : MonoBehaviour
     ToolboxAnimator toolboxAnim;
     RawImage toolboxImage;
     readonly RawImage[] packIcons = new RawImage[6];
+    readonly Text[] packLabels = new Text[6];
+
+    // tire packs, in shop order - the same order as IapStore.TirePackIds.
+    // The dollar prices are only shown until the store sends the real ones.
+    static readonly string[] PackFallbackPrices = { "$0.99", "$4.99", "$9.99", "$24.99", "$49.99", "$99.99" };
+    static readonly int[] PackTires = { 10, 55, 120, 325, 700, 1500 };
     string pendingBoxText;
     Color pendingBoxColor;
     Currency pendingBoxCurrency = Currency.Coins;
@@ -1436,7 +1671,8 @@ public class GameManager : MonoBehaviour
         new Color(0.8f, 0.4f, 1f),     // double score
         new Color(0.35f, 1f, 0.45f),   // springs
     };
-    Text questMultText, questTiresText, pauseQuestText, itemHudText, multHudText;
+    Text questMultText, questTiresText, itemHudText, multHudText;
+    readonly Text[] pauseQuestRows = new Text[3];
     Text reviveTireLabel, reviveAdLabel, reviveTimerText, reviveHaveText;
     /// <summary>An ad was asked for and has not come back yet.</summary>
     bool reviveAdPending;
@@ -1515,21 +1751,14 @@ public class GameManager : MonoBehaviour
     {
         bool isDone = questProgress[i] >= questTarget[i];
         string line = Loc.F(QuestNames[questType[i]], questTarget[i])
-               + "\n<size=24>" + Mathf.Min(questProgress[i], questTarget[i]) + " / " + questTarget[i]
+               + "\n<size=38>" + Mathf.Min(questProgress[i], questTarget[i]) + " / " + questTarget[i]
                + (isDone ? "  " + Loc.T("DONE!") : "") + "</size>";
         return isDone ? "<color=#66E28C>" + line + "</color>" : line;
     }
 
-    string CompactQuestLine(int i)
-    {
-        return QuestLine(i)
-            .Replace("<size=24>", "")
-            .Replace("</size>", "")
-            .Replace("\n", "   ");
-    }
-
     void UpdateQuest(int type, int amount, bool bestOf)
     {
+        if (tutorialOnly) return;   // a tutorial replay is practice
         bool changed = false;
         for (int i = 0; i < 3; i++)
         {
@@ -1705,8 +1934,8 @@ public class GameManager : MonoBehaviour
                      : "+" + Mathf.RoundToInt(RaceMode.Strength() * 100f) + "%";
         string cost = RaceMode.IsMaxed(u) ? Loc.T("MAX") : RaceMode.CostOf(u).ToString();
         // the picture carries the meaning, so the text just states the numbers
-        return "<size=17>" + Loc.F("LV {0}", lv) + "</size>\n<size=16>" + value
-               + "</size>\n<size=16>" + cost + "</size>";
+        return "<size=33>" + Loc.F("LV {0}", lv) + "</size>\n<size=28>" + value
+               + "</size>\n<size=28>" + cost + "</size>";
     }
 
     void OpenRaces()
@@ -1992,6 +2221,7 @@ public class GameManager : MonoBehaviour
         }
     }
     Text wheelSpinsText, wheelResultText, spinMenuLabel, wheelSpinLabel, wheelAdLabel;
+    Texture2D wheelFaceTex;     // the wheel's face - also the daily reward's spin picture
     float wheelAngle, wheelFrom, wheelTo, wheelT, wheelDuration;
     int lastWheelTick;
     const int WheelPegsPerSlice = 1;
@@ -2064,7 +2294,9 @@ public class GameManager : MonoBehaviour
     {
         if (spinMenuLabel == null) return;
         int left = SpinsLeft;
-        spinMenuLabel.text = left > 0 ? Loc.F("SPIN  {0}", left) : Loc.T("SPIN");
+        spinMenuLabel.text = "SPIN";
+        // the red dot in the corner says there is a spin waiting
+        if (spinBadge != null) spinBadge.SetActive(left > 0);
 
         var img = spinMenuLabel.transform.parent.GetComponent<Image>();
         if (img != null)
@@ -2091,6 +2323,9 @@ public class GameManager : MonoBehaviour
     RectTransform spinButtonRt;
     Vector2 spinButtonHome;
 
+    /// <summary>The red dot on the menu's SPIN button, shown while spins are waiting.</summary>
+    GameObject spinBadge;
+
     /// <summary>
     /// Nudges the spin button about while a spin is unclaimed - a small,
     /// constant motion in the corner of the eye is what actually gets it
@@ -2099,17 +2334,22 @@ public class GameManager : MonoBehaviour
     void AnimateSpinButton()
     {
         if (spinButtonRt == null || SpinsLeft <= 0) return;
+        BounceButton(spinButtonRt, spinButtonHome, 0f);
+    }
 
-        float t = Time.unscaledTime;
-        // a slow breath with a quick double-bounce every few seconds
+    /// <summary>
+    /// A slow breath with a quick double-bounce every few seconds - the
+    /// "something is waiting here" motion of SPIN and LOGIN STREAK.
+    /// </summary>
+    static void BounceButton(RectTransform rt, Vector2 home, float phase)
+    {
+        float t = Time.unscaledTime + phase;
         float beat = Mathf.Repeat(t, 2.6f);
         float pop = beat < 0.5f ? Mathf.Sin(beat / 0.5f * Mathf.PI * 2f) : 0f;
 
-        spinButtonRt.anchoredPosition = spinButtonHome
-            + new Vector2(0f, Mathf.Sin(t * 2.2f) * 4f + pop * 9f);
-        spinButtonRt.localScale = Vector3.one * (1f + Mathf.Sin(t * 2.2f) * 0.015f
-                                                    + Mathf.Abs(pop) * 0.05f);
-        spinButtonRt.localRotation = Quaternion.Euler(0f, 0f, pop * 2.5f);
+        rt.anchoredPosition = home + new Vector2(0f, Mathf.Sin(t * 2.2f) * 4f + pop * 9f);
+        rt.localScale = Vector3.one * (1f + Mathf.Sin(t * 2.2f) * 0.015f + Mathf.Abs(pop) * 0.05f);
+        rt.localRotation = Quaternion.Euler(0f, 0f, pop * 2.5f);
     }
 
     const int SpinTireCost = 5;
@@ -2488,7 +2728,8 @@ public class GameManager : MonoBehaviour
         var face = new GameObject("Face");
         face.transform.SetParent(discGo.transform, false);
         var faceImg = face.AddComponent<RawImage>();
-        faceImg.texture = MakeWheelTexture(Wheel.Length);
+        wheelFaceTex = MakeWheelTexture(Wheel.Length);
+        faceImg.texture = wheelFaceTex;
         faceImg.raycastTarget = false;
         var faceRt = faceImg.rectTransform;
         faceRt.anchorMin = Vector2.zero;
@@ -2758,6 +2999,7 @@ public class GameManager : MonoBehaviour
         // the camera is behind the car from here on, so the world no longer
         // needs to be kept alive way back down the road
         track.behindDistance = runBehindDistance;
+        CoachRoadRules();     // the tutorial's drive keeps it clear at first
     }
 
     void TickRace(float dt)
@@ -3436,8 +3678,7 @@ public class GameManager : MonoBehaviour
 
     void RefreshShopCurrency()
     {
-        storeCoinsText.text = Loc.F("COINS  {0}", totalCoins);
-        storeTiresText.text = Loc.F("TIRES  {0}", tires);
+        // the amounts themselves are the corner counters, in front of the shop
         RefreshItemUpgrades();
     }
 
@@ -3510,6 +3751,18 @@ public class GameManager : MonoBehaviour
             return;
         }
         totalCoins -= MysteryBoxCost;
+        OpenMysteryBox();
+    }
+
+    /// <summary>
+    /// Draws a mystery box prize and brings the box up full screen - bought in
+    /// the shop, or free from the daily reward.
+    /// </summary>
+    void OpenMysteryBox()
+    {
+        // the box is the shop's model, filmed by the shop's camera
+        EnsureShopShowcase();
+        shopShowcaseRoot.SetActive(true);
         pendingBoxCurrency = Currency.Coins;
         pendingBoxTires = false;
 
@@ -3816,7 +4069,7 @@ public class GameManager : MonoBehaviour
     }
 
     /// <summary>Throws the prize up on a bright full screen so it lands.</summary>
-    void ShowPrizeReveal(string text, bool tokenBox, string iconPath = null)
+    void ShowPrizeReveal(string text, bool tokenBox, string iconPath = null, Texture picture = null)
     {
         if (revealPanel == null) return;
 
@@ -3824,7 +4077,7 @@ public class GameManager : MonoBehaviour
         // cannot be read for it, as it is in the player's language
         if (string.IsNullOrEmpty(iconPath)) iconPath = CoinIconPath;
         bool token = tokenBox;
-        revealIcon.texture = Resources.Load<Texture2D>(iconPath);
+        revealIcon.texture = picture != null ? picture : Resources.Load<Texture2D>(iconPath);
 
         // token boxes get the cool blue treatment, coin boxes the gold one
         revealTint = tokenBox || token ? new Color(0.20f, 0.62f, 1f)
@@ -3878,6 +4131,11 @@ public class GameManager : MonoBehaviour
         revealT = -1f;
         revealPanel.SetActive(false);
         CloseBoxFocus();     // the box screen goes with it
+        // a daily reward's stages go dark again with it (the shop keeps its own)
+        if (showcaseRoot != null && (loginPanel == null || !loginPanel.activeSelf))
+            showcaseRoot.SetActive(false);
+        if (shopShowcaseRoot != null && (shopPanel == null || !shopPanel.activeSelf))
+            shopShowcaseRoot.SetActive(false);
         audioMan.PlayTap();
     }
 
@@ -3892,6 +4150,14 @@ public class GameManager : MonoBehaviour
         }
         tires -= TokenBoxTireCost;
         PlayerPrefs.SetInt("Tires", tires);
+        OpenTokenBox();
+    }
+
+    /// <summary>Draws a token box prize and brings the box up full screen.</summary>
+    void OpenTokenBox()
+    {
+        EnsureShopShowcase();
+        shopShowcaseRoot.SetActive(true);
 
         // a brand token, 1-5, weighted toward the cheaper marques - but only
         // from the marques that still have a car left to buy
@@ -3978,17 +4244,56 @@ public class GameManager : MonoBehaviour
         audioMan.PlayCoin();
     }
 
-    void BuyTirePack(int amount)
+    /// <summary>A tire pack button: the store takes it from here (see GrantPurchase).</summary>
+    void BuyTirePack(int pack)
     {
-        // TODO integrate Unity IAP / store purchases here. Until the store is
-        // wired up, the pack is granted instantly so the flow can be tested.
+        if (audioMan != null) audioMan.PlayTap();
+        IapStore.Buy(IapStore.TirePackIds[pack]);
+    }
+
+    /// <summary>
+    /// Hands out something paid for. Called by IapStore once the store says
+    /// the payment went through - including purchases left unfinished by a
+    /// crash, which arrive at the next launch.
+    /// </summary>
+    void GrantPurchase(string productId)
+    {
+        int pack = System.Array.IndexOf(IapStore.TirePackIds, productId);
+        if (pack < 0)
+        {
+            Debug.LogWarning("Purchase of unknown product " + productId);
+            return;
+        }
+        int amount = PackTires[pack];
         tires += amount;
         PlayerPrefs.SetInt("Tires", tires);
         PlayerPrefs.Save();
-        boxResultText.text = Loc.F("+{0} TIRES!", amount);
-        boxResultText.color = new Color(0.7f, 0.9f, 1f);
+        if (boxResultText != null)
+        {
+            boxResultText.text = Loc.F("+{0} TIRES!", amount);
+            boxResultText.color = new Color(0.7f, 0.9f, 1f);
+        }
         RefreshShopCurrency();
-        audioMan.PlayCoin();
+        if (audioMan != null) audioMan.PlayCoin();
+    }
+
+    /// <summary>Writes each pack's tires and price - the store's price once it has sent them.</summary>
+    void RefreshPackPrices()
+    {
+        for (int i = 0; i < packLabels.Length; i++)
+        {
+            if (packLabels[i] == null) continue;
+            string price = IapStore.PriceFor(IapStore.TirePackIds[i], PackFallbackPrices[i]);
+            packLabels[i].text = PackTires[i] + "\n\n<size=24>" + price + "</size>";
+        }
+    }
+
+    void OnDestroy()
+    {
+        // the scene reloads when the language changes; the store lives on,
+        // so it must stop talking to this copy of the game
+        if (IapStore.GrantHandler == (System.Action<string>)GrantPurchase) IapStore.GrantHandler = null;
+        IapStore.PricesChanged -= RefreshPackPrices;
     }
 
     void OpenGarage()
@@ -4745,6 +5050,11 @@ public class GameManager : MonoBehaviour
             garagePriceIcon.texture = Resources.Load<Texture2D>(CoinIconPath);
             garagePriceIcon.gameObject.SetActive(true);
         }
+
+        // green to buy or equip; grey when the car cannot be had from here
+        bool locked = !owned && d.cost < 0 && d.cost != -2;
+        var actionImg = shopActionLabel.transform.parent.GetComponent<Image>();
+        if (actionImg != null) actionImg.color = locked ? LockedGrey : GoGreen;
     }
 
     void ShopAction()
@@ -4802,10 +5112,13 @@ public class GameManager : MonoBehaviour
     void OpenSettings()
     {
         settingsFromPause = state == State.Paused;
-        // changing language rebuilds the menu, so it is offered from the
-        // menu only - never in the middle of a run
+        // changing language rebuilds the menu, and the tutorial is a drive of
+        // its own, so both are offered from the menu only - never in the
+        // middle of a run
         if (languageBtnLabel != null)
             languageBtnLabel.transform.parent.gameObject.SetActive(!settingsFromPause);
+        if (tutorialBtnLabel != null)
+            tutorialBtnLabel.transform.parent.gameObject.SetActive(!settingsFromPause);
         if (settingsFromPause) pausePanel.SetActive(false);
         else menuPanel.SetActive(false);
         settingsPanel.SetActive(true);
@@ -4828,6 +5141,8 @@ public class GameManager : MonoBehaviour
     void ApplyLobbyTrack()
     {
         if (track == null) return;
+        track.UseFixedLayout(0);      // a fresh road again (the tutorial fixes it)
+        track.openingStraight = 0f;
         track.spawnObstacles = false;
         track.spawnTraffic = false;
         track.spawnCoins = false;
@@ -5260,11 +5575,7 @@ public class GameManager : MonoBehaviour
                 // fades up as the intro's own letters fade down, so the swap
                 // is a cross-fade instead of one popping off the other
                 if (showTitle) FadeInMenuTitle();
-                if (loginPanel != null && loginPanel.activeSelf)
-                {
-                    loginPanel.SetActive(false);
-                    if (showcaseRoot != null) showcaseRoot.SetActive(false);
-                }
+                if (loginPanel != null && loginPanel.activeSelf) CloseLoginPopup();
                 // Skipping is handled by the intro's own full-screen button.
                 // Reading raw input here as well would fire on the press while
                 // the UI fires on the release, and anything under the intro
@@ -5274,6 +5585,7 @@ public class GameManager : MonoBehaviour
 
         AnimateBonus();
         TickBoxReveal();
+        TickCoach();          // the tutorial (GameManager.Tutorial.cs)
 
         // corner currency counters stay current in every state
         if (persistentCoinsText != null) RefreshCornerCounters();
@@ -5284,7 +5596,12 @@ public class GameManager : MonoBehaviour
             case State.Menu:
                 TickLobbyDrive();
                 TickWheel();
-                if (menuPanel.activeSelf) AnimateSpinButton();
+                if (menuPanel.activeSelf)
+                {
+                    AnimateSpinButton();
+                    AnimateLoginButton();
+                }
+                TickLoginPopup();
                 break;
 
             case State.Playing:
@@ -5424,6 +5741,7 @@ public class GameManager : MonoBehaviour
         }
         // one recognisable "you picked something up" chime for every item
         audioMan.PlayPowerUp();
+        CoachOnItem(type);
     }
 
     void TickPlaying()
@@ -5440,21 +5758,21 @@ public class GameManager : MonoBehaviour
             {
                 track.TickTraffic(dt, car.DistanceTraveled);
                 car.Tick(dt);          // crashes can't happen - mercy is active
-                TickBiome(dt);
+                if (!coachDrive) TickBiome(dt);
             }
             UpdateHud();
             return;
         }
 
         if (mode == Mode.Race) TickRace(dt);
-        else TickBiome(dt);
+        else if (!coachDrive) TickBiome(dt);   // the tutorial stays in the forest
         TickTutorial(dt);
         TickItems(dt);
         track.TickTraffic(dt, car.DistanceTraveled);
         CarController.TickResult result = car.Tick(dt);
 
         // springs: one boing per jump
-        if (car.ConsumeJumpStarted()) audioMan.PlayBoing();
+        if (car.ConsumeJumpStarted()) { audioMan.PlayBoing(); CoachOnJump(); }
 
         // shield: obstacles get punted off the road instead of passed through
         if (invincibleT > 0f &&
@@ -5555,6 +5873,13 @@ public class GameManager : MonoBehaviour
                 Cars[selectedCar].hover && !rewindUsed)
             {
                 StartRewind();
+                return;
+            }
+            // a tutorial replayed from Settings just ends - no revive offer,
+            // no results screen
+            if (coachDrive)
+            {
+                CoachCrash();
                 return;
             }
             // revive offer: tires or ad, before the run truly ends
@@ -5668,7 +5993,7 @@ public class GameManager : MonoBehaviour
         bestText = MakeText(uiRoot, "Best", 40, TextAnchor.UpperCenter,
             new Vector2(0.5f, 1f), new Vector2(0f, -246f), new Vector2(700f, 60f));
         speedText = MakeText(uiRoot, "Speed", 40, TextAnchor.UpperRight,
-            new Vector2(1f, 1f), new Vector2(-40f, -196f), new Vector2(400f, 60f));
+            new Vector2(1f, 1f), new Vector2(-40f, -200f), new Vector2(400f, 60f));
 
         // always-visible currency counters, one per top corner, each on its
         // own dark pill so it reads over the bright sky and road behind it
@@ -5677,13 +6002,8 @@ public class GameManager : MonoBehaviour
         persistentTiresText = MakeCornerCounter(uiRoot, true,
             new Color(1f, 0.68f, 0.62f), out tirePillRt);
 
-        // pause button, top-right (below the tire counter)
-        var pauseLabel = MakeButton(uiRoot, "PAUSE", 30,
-            Vector2.zero, new Vector2(220f, 90f), PauseGame);
-        pauseButton = pauseLabel.transform.parent.gameObject;
-        var pbRt = pauseButton.GetComponent<RectTransform>();
-        pbRt.anchorMin = pbRt.anchorMax = pbRt.pivot = new Vector2(1f, 1f);
-        pbRt.anchoredPosition = new Vector2(-52f, -96f);
+        // pause button, top-right under the tire counter: the classic II
+        pauseButton = MakePauseButton(uiRoot);
         pauseButton.SetActive(false);
         coinHudText = MakeText(uiRoot, "CoinHud", 36, TextAnchor.UpperLeft,
             new Vector2(0f, 1f), new Vector2(62f, -96f), new Vector2(420f, 55f));
@@ -5795,8 +6115,9 @@ public class GameManager : MonoBehaviour
         menuCoinsText.color = new Color(1f, 0.82f, 0.1f);
         // PLAY stands alone; everything else sits in a tidy two-column block
         // underneath, so the menu is not one long stack of identical bars.
-        MakeButton(menuPanel.transform, "PLAY", 64,
-            new Vector2(0f, 30f), new Vector2(600f, 150f), PlayPressed);
+        playButtonGo = MakeButton(menuPanel.transform, "PLAY", 64,
+            new Vector2(0f, 30f), new Vector2(600f, 150f), PlayPressed, GoGreen)
+            .transform.parent.gameObject;
 
         // Build number, bottom right. The panel bleeds past the safe area, so
         // a corner-anchored label has to come back in by the same amount or it
@@ -5808,10 +6129,10 @@ public class GameManager : MonoBehaviour
         version.text = GameVersion;
         version.color = new Color(1f, 1f, 1f, 0.28f);
 
-        // RACES is the second big button, straight under PLAY, on a
+        // RACE is the second big button, straight under PLAY, on a
         // chequered flag
-        MakeRaceButton(menuPanel.transform, new Vector2(0f, -137f),
-            new Vector2(600f, 140f));
+        raceButtonGo = ButtonOf(MakeRaceButton(menuPanel.transform, new Vector2(0f, -137f),
+            new Vector2(600f, 140f)).transform);
 
         const float ColX = 152f;
         const float RowTop = -289f;
@@ -5824,24 +6145,36 @@ public class GameManager : MonoBehaviour
         spinMenuLabel = MakeButton(menuPanel.transform, "SPIN", smallText,
             new Vector2(-ColX, RowTop), small, OpenWheel,
             new Color(1f, 0.78f, 0.12f));
-        MakeButton(menuPanel.transform, "GARAGE", smallText,
-            new Vector2(ColX, RowTop), small, OpenGarage);
+        spinBadge = MakeBadge(spinMenuLabel.transform.parent);
+        garageButtonGo = MakeButton(menuPanel.transform, "GARAGE", smallText,
+            new Vector2(ColX, RowTop), small, OpenGarage).transform.parent.gameObject;
 
-        MakeButton(menuPanel.transform, "SHOP", smallText,
-            new Vector2(-ColX, RowTop - RowStep), small, OpenShop);
-        MakeButton(menuPanel.transform, "QUESTS", smallText,
-            new Vector2(ColX, RowTop - RowStep), small, OpenQuests);
+        shopButtonGo = MakeButton(menuPanel.transform, "SHOP", smallText,
+            new Vector2(-ColX, RowTop - RowStep), small, OpenShop).transform.parent.gameObject;
+        questsButtonGo = MakeButton(menuPanel.transform, "QUESTS", smallText,
+            new Vector2(ColX, RowTop - RowStep), small, OpenQuests).transform.parent.gameObject;
+        // SPIN is drawn after its neighbours: when it bounces, its red dot
+        // swings a little over GARAGE and should pass over it, not under it
+        spinMenuLabel.transform.parent.SetAsLastSibling();
 
         // settings: a gear in the bottom-left corner, mirroring the version
         // number in the bottom-right (and brought back in by the panel's
         // overspill the same way)
-        MakeIconButton(menuPanel.transform, SettingsIconPath, "SETTINGS",
+        settingsButtonGo = MakeIconButton(menuPanel.transform, SettingsIconPath, "SETTINGS",
             new Vector2(0f, 0f), new Vector2(40f + PanelBleed.x, 34f + PanelBleed.y),
-            new Vector2(128f, 128f), OpenSettings);
-        var hint = MakeText(menuPanel.transform, "Hint", 30, TextAnchor.MiddleCenter,
-            new Vector2(0.5f, 0.5f), new Vector2(0f, -560f), new Vector2(900f, 60f));
-        hint.text = "SLIDE THUMB TO STEER";
-        hint.color = new Color(1f, 1f, 1f, 0.75f);
+            new Vector2(128f, 128f), OpenSettings).gameObject;
+        // LOGIN STREAK: a third row, as wide as the two buttons above it and
+        // as tall as one, yellow and bouncing with a red dot like SPIN while
+        // today's reward is still to collect
+        loginMenuLabel = MakeButton(menuPanel.transform, "LOGIN STREAK", smallText,
+            new Vector2(0f, RowTop - 2f * RowStep), new Vector2(ColX * 2f + small.x, small.y),
+            OpenLoginStreak, LoginYellow);
+        loginButtonGo = loginMenuLabel.transform.parent.gameObject;
+        loginButtonRt = loginButtonGo.transform as RectTransform;
+        loginButtonHome = loginButtonRt.anchoredPosition;
+        loginBadge = MakeBadge(loginButtonGo.transform);
+        // SPIN stays on top: its dot swings over its neighbours when it bounces
+        spinMenuLabel.transform.parent.SetAsLastSibling();
 
         // --- settings
         settingsPanel = MakePanel(uiRoot, "SettingsPanel");
@@ -5883,6 +6216,9 @@ public class GameManager : MonoBehaviour
             Loc.F("LANGUAGE: {0}", Loc.NativeName(Loc.Current)), 38,
             new Vector2(0f, -90f), new Vector2(640f, 100f), OpenLanguages);
         BuildLanguagePanel(uiRoot);
+        // plays the tutorial again, on its own
+        tutorialBtnLabel = MakeButton(settingsGeneralTab.transform, "TUTORIAL", 38,
+            new Vector2(0f, -220f), new Vector2(640f, 100f), ReplayTutorial);
 
         // --- credits
         var credLine = MakeText(settingsCreditsTab.transform, "CreditsBody", 28,
@@ -5981,31 +6317,37 @@ public class GameManager : MonoBehaviour
         garagePriceIcon = MakeCurrencyIcon(garageCarsTab.transform, new Vector2(0.5f, 0.5f),
             new Vector2(-235f, -250f), 52f, false);
         shopActionLabel = MakeButton(garageCarsTab.transform, "BUY", 48,
-            new Vector2(0f, -370f), new Vector2(480f, 120f), ShopAction);
+            new Vector2(0f, -370f), new Vector2(480f, 120f), ShopAction, GoGreen);
         // below the BUY button and below the paint tab's last row of swatches
         MakeCloseButton(garagePanel.transform, new Vector2(0f, -600f), CloseGarage);
 
         // --- pause menu
         pausePanel = MakePanel(uiRoot, "PausePanel");
-        MakeCard(pausePanel.transform, new Vector2(0f, 105f), new Vector2(950f, 900f),
+        // taller than it was, to give the quests the room the quests window gives them
+        MakeCard(pausePanel.transform, new Vector2(0f, 162.5f), new Vector2(950f, 1115f),
             new Color(0.13f, 0.09f, 0.2f, 0.92f));
         var pTitle = MakeText(pausePanel.transform, "PauseTitle", 84, TextAnchor.MiddleCenter,
-            new Vector2(0.5f, 0.5f), new Vector2(0f, 430f), new Vector2(800f, 120f));
+            new Vector2(0.5f, 0.5f), new Vector2(0f, 625f), new Vector2(800f, 120f));
         pTitle.text = "PAUSED";
         pTitle.color = new Color(1f, 0.72f, 0.12f);
         var qTitle = MakeText(pausePanel.transform, "QuestsTitle", 46, TextAnchor.MiddleCenter,
-            new Vector2(0.5f, 0.5f), new Vector2(0f, 290f), new Vector2(700f, 70f));
+            new Vector2(0.5f, 0.5f), new Vector2(0f, 515f), new Vector2(700f, 70f));
         qTitle.text = "QUESTS";
-        pauseQuestText = MakeText(pausePanel.transform, "QuestsBody", 22, TextAnchor.UpperCenter,
-            new Vector2(0.5f, 0.5f), new Vector2(0f, 170f), new Vector2(820f, 210f));
-        pauseQuestText.color = new Color(1f, 1f, 1f, 0.85f);
-        pauseQuestText.horizontalOverflow = HorizontalWrapMode.Wrap;
-        pauseQuestText.verticalOverflow = VerticalWrapMode.Truncate;
-        pauseQuestText.lineSpacing = 1.25f;
+        // one card per quest, with the quests window's text size
+        for (int i = 0; i < 3; i++)
+        {
+            float y = 390f - i * 160f;
+            MakeCard(pausePanel.transform, new Vector2(0f, y), new Vector2(890f, 150f),
+                new Color(0.22f, 0.17f, 0.33f, 0.95f));
+            pauseQuestRows[i] = MakeText(pausePanel.transform, "PauseQuest" + i, 50, TextAnchor.MiddleCenter,
+                new Vector2(0.5f, 0.5f), new Vector2(0f, y), new Vector2(860f, 146f), true);
+            pauseQuestRows[i].lineSpacing = 1.15f;
+            pauseQuestRows[i].horizontalOverflow = HorizontalWrapMode.Wrap;
+        }
         MakeButton(pausePanel.transform, "RESUME", 56,
-            new Vector2(0f, -40f), new Vector2(560f, 140f), ResumeGame);
+            new Vector2(0f, -115f), new Vector2(560f, 140f), ResumeGame);
         MakeButton(pausePanel.transform, "MENU", 40,
-            new Vector2(0f, -220f), new Vector2(560f, 100f), QuitToMenu);
+            new Vector2(0f, -285f), new Vector2(560f, 100f), QuitToMenu);
         // settings: the same gear as the menu's, in the same corner
         MakeIconButton(pausePanel.transform, SettingsIconPath, "SETTINGS",
             new Vector2(0f, 0f), new Vector2(40f + PanelBleed.x, 34f + PanelBleed.y),
@@ -6016,7 +6358,7 @@ public class GameManager : MonoBehaviour
         var dimGo = new GameObject("Dim");
         dimGo.transform.SetParent(loginPanel.transform, false);
         var dim = dimGo.AddComponent<Image>();
-        dim.color = new Color(0f, 0f, 0f, 0.8f);
+        dim.color = new Color(0f, 0f, 0f, 0.85f);
         var dimRt = dim.rectTransform;
         dimRt.anchorMin = Vector2.zero;
         dimRt.anchorMax = Vector2.one;
@@ -6033,91 +6375,144 @@ public class GameManager : MonoBehaviour
         Transform loginBody = loginBodyGo.transform;
         var loginPop = loginBodyGo.AddComponent<PopIn>();
         loginPop.dimmer = dim;
+        loginPop.dimmerAlpha = 0.85f;
 
-        MakeCard(loginBody, new Vector2(0f, 20f), new Vector2(1020f, 950f),
-            new Color(0.13f, 0.09f, 0.2f, 0.95f));
-        var lTitle = MakeText(loginBody, "LoginTitle", 72, TextAnchor.MiddleCenter,
-            new Vector2(0.5f, 0.5f), new Vector2(0f, 360f), new Vector2(900f, 100f));
+        // a solid card - nothing of the lobby shows through the week
+        MakeCard(loginBody, new Vector2(0f, 15f), new Vector2(1020f, 1550f),
+            new Color(0.13f, 0.09f, 0.2f, 1f));
+        var lTitle = MakeText(loginBody, "LoginTitle", 76, TextAnchor.MiddleCenter,
+            new Vector2(0.5f, 0.5f), new Vector2(0f, 720f), new Vector2(960f, 100f));
         lTitle.text = "LOGIN STREAK";
         lTitle.color = new Color(1f, 0.72f, 0.12f);
-        loginDayText = MakeText(loginBody, "LoginDay", 44, TextAnchor.MiddleCenter,
-            new Vector2(0.5f, 0.5f), new Vector2(0f, 265f), new Vector2(800f, 70f));
+        loginDayText = MakeText(loginBody, "LoginDay", 46, TextAnchor.MiddleCenter,
+            new Vector2(0.5f, 0.5f), new Vector2(0f, 632f), new Vector2(900f, 70f));
         loginDayText.color = new Color(1f, 0.8f, 0.3f);
 
-        // all 7 days visible in a row, current day highlighted at show time,
-        // each with a live spinning 3D model
-        for (int i = 0; i < 7; i++)
+        // days 1-6: two rows of three big cells. Today's gets a gold frame,
+        // drawn behind it (so it is made first).
+        loginCellFrame = MakeCard(loginBody, Vector2.zero, LoginCellSize + new Vector2(20f, 20f),
+            new Color(1f, 0.86f, 0.25f));
+        for (int i = 0; i < 6; i++)
         {
-            Image cell = MakeCard(loginBody,
-                new Vector2(-435f + i * 145f, 120f), new Vector2(135f, 185f), Color.white);
+            Vector2 at = new Vector2(-325f + (i % 3) * 325f, i < 3 ? 430f : 115f);
+            Image cell = MakeCard(loginBody, at, LoginCellSize, Color.white);
 
-            var dayLabel = MakeText(cell.transform, "Day", 22, TextAnchor.MiddleCenter,
-                new Vector2(0.5f, 0.5f), new Vector2(0f, 72f), new Vector2(135f, 40f));
+            // plain lettering: it has to read at a glance
+            var dayLabel = MakeText(cell.transform, "Day", 34, TextAnchor.MiddleCenter,
+                new Vector2(0.5f, 0.5f), new Vector2(0f, 116f), new Vector2(290f, 50f), true);
             dayLabel.text = Loc.F("DAY {0}", i + 1);
 
-            var iconGo = new GameObject("Icon");
-            iconGo.transform.SetParent(cell.transform, false);
-            var icon = iconGo.AddComponent<RawImage>();
-            icon.raycastTarget = false;
-            var iconRt = icon.rectTransform;
-            iconRt.anchorMin = iconRt.anchorMax = iconRt.pivot = new Vector2(0.5f, 0.5f);
-            iconRt.anchoredPosition = new Vector2(0f, 5f);
-            iconRt.sizeDelta = new Vector2(96f, 96f);
-            loginCellIcons[i] = icon;
+            loginCellIcons[i] = MakeLoginPicture(cell.transform, new Vector2(0f, 6f), 158f);
+            if (LoginPrizes[i] == LoginPrize.Spin)
+            {
+                // the wheel gets its pointer, so it reads as the wheel
+                var ptrGo = new GameObject("Pointer");
+                ptrGo.transform.SetParent(cell.transform, false);
+                var ptr = ptrGo.AddComponent<RawImage>();
+                ptr.texture = MakePointerTexture();
+                ptr.raycastTarget = false;
+                var pRt = ptr.rectTransform;
+                pRt.anchorMin = pRt.anchorMax = pRt.pivot = new Vector2(0.5f, 0.5f);
+                pRt.anchoredPosition = new Vector2(0f, 6f + 79f - 6f);
+                pRt.sizeDelta = new Vector2(38f, 44f);
+            }
 
-            var cellText = MakeText(cell.transform, "CellText", 24, TextAnchor.MiddleCenter,
-                new Vector2(0.5f, 0.5f), new Vector2(0f, -62f), new Vector2(135f, 50f));
-            cellText.text = i == 6 ? "CAR" : "+" + LoginRewards[i];
+            var cellText = MakeText(cell.transform, "CellText", 36, TextAnchor.MiddleCenter,
+                new Vector2(0.5f, 0.5f), new Vector2(0f, -106f), new Vector2(290f, 56f), true);
+            cellText.text = LoginCellCaption(i);
             loginCells[i] = cell;
             loginCellTexts[i] = cellText;
         }
 
-        loginRewardText = MakeText(loginBody, "LoginReward", 56, TextAnchor.MiddleCenter,
-            new Vector2(0.5f, 0.5f), new Vector2(0f, -60f), new Vector2(800f, 90f));
+        // day 7, the car: a whole row to itself, twice the size of the rest,
+        // with a gold edge and the car turning on rays of light
+        Vector2 carAt = new Vector2(0f, -225f);
+        Vector2 carSize = new Vector2(960f, 350f);
+        loginCarEdge = MakeCard(loginBody, carAt, carSize + new Vector2(20f, 20f),
+            new Color(1f, 0.86f, 0.25f));
+        Image carCell = MakeCard(loginBody, carAt, carSize, Color.white);
+        var raysGo = new GameObject("Rays");
+        raysGo.transform.SetParent(carCell.transform, false);
+        loginCarRays = raysGo.AddComponent<RawImage>();
+        loginCarRays.texture = MakeRaysTexture(12);
+        loginCarRays.color = new Color(1f, 0.92f, 0.55f, 0.35f);
+        loginCarRays.raycastTarget = false;
+        var raysRt = loginCarRays.rectTransform;
+        raysRt.anchorMin = raysRt.anchorMax = raysRt.pivot = new Vector2(0.5f, 0.5f);
+        raysRt.anchoredPosition = new Vector2(-255f, 0f);
+        raysRt.sizeDelta = new Vector2(330f, 330f);
+        loginCellIcons[6] = MakeLoginPicture(carCell.transform, new Vector2(-255f, 0f), 340f);
+        var carDay = MakeText(carCell.transform, "Day", 40, TextAnchor.MiddleCenter,
+            new Vector2(0.5f, 0.5f), new Vector2(170f, 118f), new Vector2(560f, 56f), true);
+        carDay.text = Loc.F("DAY {0}", 7);
+        var carText = MakeText(carCell.transform, "CellText", 66, TextAnchor.MiddleCenter,
+            new Vector2(0.5f, 0.5f), new Vector2(170f, -8f), new Vector2(560f, 190f));
+        carText.lineSpacing = 1.1f;
+        loginCells[6] = carCell;
+        loginCellTexts[6] = carText;
+
+        loginRewardText = MakeText(loginBody, "LoginReward", 62, TextAnchor.MiddleCenter,
+            new Vector2(0.5f, 0.5f), new Vector2(0f, -478f), new Vector2(960f, 110f));
         loginRewardText.color = new Color(1f, 0.82f, 0.1f);
-        loginCarText = MakeText(loginBody, "LoginCar", 42, TextAnchor.MiddleCenter,
-            new Vector2(0.5f, 0.5f), new Vector2(0f, -160f), new Vector2(900f, 70f));
-        loginCarText.color = new Color(0.5f, 0.9f, 1f);
-        loginCarText.gameObject.SetActive(false);
-        claimBtnLabel = MakeButton(loginBody, "CLAIM", 54,
-            new Vector2(0f, -310f), new Vector2(520f, 130f), ClaimLogin);
+        claimBtnLabel = MakeButton(loginBody, "CLAIM", 58,
+            new Vector2(0f, -640f), new Vector2(560f, 140f), ClaimLogin, GoGreen);
 
         BuildUnlockPanel(uiRoot);
         BuildWheelPanel(uiRoot);
         BuildBoxFocus(uiRoot);
         BuildPrizeReveal(uiRoot);
+        int finishFrom = uiRoot.childCount;
         BuildFinishCinematic(uiRoot);
+        var finishParts = new List<Transform>();
+        for (int i = finishFrom; i < uiRoot.childCount; i++) finishParts.Add(uiRoot.GetChild(i));
 
         // --- race level select: 4 biomes x 5 levels
         racePanel = MakePanel(uiRoot, "RacePanel");
-        // content runs from +1050 down to -930, 90 under the last row of
+        // content runs from +1050 down to -1120, 90 under the last row of
         // levels; the card carries on past the end so it runs into the footer
         Color raceWindow = new Color(0.13f, 0.09f, 0.2f, 0.93f);
-        Transform raceScroll = MakeScrollArea(racePanel, 1980f, 60f);
-        MakeCard(raceScroll, new Vector2(0f, -60f), new Vector2(1010f, 1900f), raceWindow);
+        Transform raceScroll = MakeScrollArea(racePanel, 2170f, -35f);
+        MakeCard(raceScroll, new Vector2(0f, -155f), new Vector2(1010f, 2090f), raceWindow);
         var rTitle2 = MakeText(raceScroll, "RaceTitle", 80, TextAnchor.MiddleCenter,
             new Vector2(0.5f, 0.5f), new Vector2(0f, 800f), new Vector2(900f, 110f));
         rTitle2.text = "RACES";
         rTitle2.color = new Color(1f, 0.72f, 0.12f);
 
-        // --- three upgrades, shown above the level grid
-        var upgHeader = MakeText(raceScroll, "UpgHeader", 40, TextAnchor.MiddleCenter,
-            new Vector2(0.5f, 0.5f), new Vector2(0f, 595f), new Vector2(900f, 60f));
+        // --- three upgrades, in a panel of their own above the level grid, so
+        // they read as a separate thing from the levels under them
+        MakeCard(raceScroll, new Vector2(0f, 462.5f), new Vector2(960f, 485f),
+            new Color(0.22f, 0.17f, 0.34f, 1f));
+        var upgHeader = MakeText(raceScroll, "UpgHeader", 42, TextAnchor.MiddleCenter,
+            new Vector2(0.5f, 0.5f), new Vector2(0f, 665f), new Vector2(900f, 60f));
         upgHeader.text = "UPGRADES";
         upgHeader.color = new Color(1f, 0.8f, 0.35f);
         // each upgrade is shown with a picture of what it does: a speedometer
         // for top speed, a car shunting another aside for chassis strength,
         // and a growing stack of coins for the coin bonus
         string[] upgIcons = { "UI/icon_engine", "UI/icon_chassis", "UI/icon_coinbonus" };
+        // a colour each, picked so its picture stands out on it: red for the
+        // engine, green for the chassis, blue for the coin bonus
+        Color[] upgColors =
+        {
+            new Color(0.85f, 0.22f, 0.20f),
+            new Color(0.20f, 0.62f, 0.30f),
+            new Color(0.20f, 0.45f, 0.85f),
+        };
         for (int u = 0; u < 3; u++)
         {
             RaceMode.Upgrade up = (RaceMode.Upgrade)u;
-            upgradeLabels[u] = MakeButton(raceScroll, "Upg" + u, 20,
-                new Vector2(-320f + u * 320f, 470f), new Vector2(300f, 196f),
-                () => BuyUpgrade(up), null, true);
-            // text sits under the picture
-            upgradeLabels[u].rectTransform.anchoredPosition = new Vector2(0f, -46f);
-            upgradeLabels[u].rectTransform.sizeDelta = new Vector2(290f, 100f);
+            upgradeLabels[u] = MakeButton(raceScroll, "Upg" + u, 30,
+                new Vector2(-315f + u * 315f, 430f), new Vector2(305f, 380f),
+                () => BuyUpgrade(up), upgColors[u], true);
+            // the numbers sit under the picture
+            upgradeLabels[u].rectTransform.anchoredPosition = new Vector2(0f, -97f);
+            upgradeLabels[u].rectTransform.sizeDelta = new Vector2(295f, 150f);
+
+            // and what the upgrade is, across the top
+            var upgName = MakeText(upgradeLabels[u].transform.parent, "UpgName" + u, 38,
+                TextAnchor.MiddleCenter, new Vector2(0.5f, 0.5f), new Vector2(0f, 150f),
+                new Vector2(290f, 50f), true);
+            upgName.text = RaceMode.UpgradeNames[u];
 
             var icoGo = new GameObject("UpgIcon" + u);
             icoGo.transform.SetParent(upgradeLabels[u].transform.parent, false);
@@ -6126,13 +6521,14 @@ public class GameManager : MonoBehaviour
             ico.texture = Resources.Load<Texture2D>(upgIcons[u]);
             var icoRt = ico.rectTransform;
             icoRt.anchorMin = icoRt.anchorMax = icoRt.pivot = new Vector2(0.5f, 0.5f);
-            icoRt.anchoredPosition = new Vector2(0f, 54f);
-            icoRt.sizeDelta = new Vector2(92f, 92f);
+            icoRt.anchoredPosition = new Vector2(0f, 56f);
+            icoRt.sizeDelta = new Vector2(132f, 132f);
         }
 
+        // the level grid starts a clear gap under the upgrades' panel
         for (int b = 0; b < RaceMode.BiomeCount; b++)
         {
-            float rowY = 330f - b * 330f;
+            float rowY = 140f - b * 330f;
             var bLabel = MakeText(raceScroll, "RaceBiome" + b, 38, TextAnchor.MiddleCenter,
                 new Vector2(0.5f, 0.5f), new Vector2(0f, rowY), new Vector2(900f, 60f));
             bLabel.text = RaceMode.BiomeNames[b];
@@ -6168,22 +6564,25 @@ public class GameManager : MonoBehaviour
             new Vector2(0.5f, 0.5f), new Vector2(0f, 550f), new Vector2(800f, 120f));
         qpTitle.text = "QUESTS";
         qpTitle.color = new Color(1f, 0.72f, 0.12f);
-        questMultText = MakeText(questsPanel.transform, "QPMult", 36, TextAnchor.MiddleCenter,
+        questMultText = MakeText(questsPanel.transform, "QPMult", 40, TextAnchor.MiddleCenter,
             new Vector2(0.5f, 0.5f), new Vector2(0f, 430f), new Vector2(900f, 70f));
         questMultText.color = new Color(0.7f, 0.9f, 1f);
-        questTiresText = MakeText(questsPanel.transform, "QPTires", 32, TextAnchor.MiddleCenter,
+        questTiresText = MakeText(questsPanel.transform, "QPTires", 36, TextAnchor.MiddleCenter,
             new Vector2(0.5f, 0.5f), new Vector2(0f, 350f), new Vector2(900f, 60f));
         questTiresText.color = new Color(1f, 0.34f, 0.30f);
         for (int i = 0; i < 3; i++)
         {
             MakeCard(questsPanel.transform, new Vector2(0f, 190f - i * 220f),
                 new Vector2(920f, 190f), new Color(0.22f, 0.17f, 0.33f, 0.95f));
-            questRowTexts[i] = MakeText(questsPanel.transform, "QRow" + i, 30, TextAnchor.MiddleCenter,
-                new Vector2(0.5f, 0.5f), new Vector2(0f, 190f - i * 220f), new Vector2(860f, 180f), true);
-            questRowTexts[i].lineSpacing = 1.25f;
+            // big enough to read at a glance; a long one (in some languages)
+            // wraps onto a second line rather than running off the card
+            questRowTexts[i] = MakeText(questsPanel.transform, "QRow" + i, 50, TextAnchor.MiddleCenter,
+                new Vector2(0.5f, 0.5f), new Vector2(0f, 190f - i * 220f), new Vector2(870f, 184f), true);
+            questRowTexts[i].lineSpacing = 1.15f;
+            questRowTexts[i].horizontalOverflow = HorizontalWrapMode.Wrap;
         }
-        var qpHint = MakeText(questsPanel.transform, "QPHint", 26, TextAnchor.MiddleCenter,
-            new Vector2(0.5f, 0.5f), new Vector2(0f, -400f), new Vector2(920f, 60f));
+        var qpHint = MakeText(questsPanel.transform, "QPHint", 32, TextAnchor.MiddleCenter,
+            new Vector2(0.5f, 0.5f), new Vector2(0f, -405f), new Vector2(920f, 70f));
         qpHint.text = "COMPLETE ALL 3\n+1 MULTIPLIER   +6 TIRES";
         qpHint.color = new Color(1f, 1f, 1f, 0.6f);
         // inside the card (it ends at -645), under the hint
@@ -6191,21 +6590,17 @@ public class GameManager : MonoBehaviour
 
         // --- shop (tires for money, mystery boxes for coins)
         shopPanel = MakePanel(uiRoot, "ShopPanel");
-        // content runs from about +700 (title) down to -2150 (last upgrade row)
+        // content runs from about +635 (title) down to -2150 (last upgrade row).
+        // The shop has no coin and tire lines of its own: the corner counters
+        // are drawn in front of the windows, so they show here as everywhere.
         Color shopWindow = new Color(0.13f, 0.09f, 0.2f, 0.92f);
-        Transform shopScroll = MakeScrollArea(shopPanel, 2900f, -725f);
+        Transform shopScroll = MakeScrollArea(shopPanel, 2835f, -757.5f);
         // carries on past the end of the content so it runs into the footer
-        MakeCard(shopScroll, new Vector2(0f, -770f), new Vector2(1010f, 2970f), shopWindow);
+        MakeCard(shopScroll, new Vector2(0f, -802.5f), new Vector2(1010f, 2905f), shopWindow);
         var shTitle = MakeText(shopScroll, "ShopTitle", 84, TextAnchor.MiddleCenter,
-            new Vector2(0.5f, 0.5f), new Vector2(0f, 640f), new Vector2(800f, 120f));
+            new Vector2(0.5f, 0.5f), new Vector2(0f, 575f), new Vector2(800f, 120f));
         shTitle.text = "SHOP";
         shTitle.color = new Color(1f, 0.72f, 0.12f);
-        storeCoinsText = MakeText(shopScroll, "StoreCoins", 40, TextAnchor.MiddleCenter,
-            new Vector2(0.5f, 0.5f), new Vector2(-220f, 540f), new Vector2(440f, 60f));
-        storeCoinsText.color = new Color(1f, 0.82f, 0.1f);
-        storeTiresText = MakeText(shopScroll, "StoreTires", 40, TextAnchor.MiddleCenter,
-            new Vector2(0.5f, 0.5f), new Vector2(220f, 540f), new Vector2(440f, 60f));
-        storeTiresText.color = new Color(1f, 0.34f, 0.30f);
 
         var boxLabel = MakeText(shopScroll, "BoxLabel", 46, TextAnchor.MiddleCenter,
             new Vector2(0.5f, 0.5f), new Vector2(0f, 460f), new Vector2(700f, 70f));
@@ -6256,17 +6651,18 @@ public class GameManager : MonoBehaviour
             new Vector2(0.5f, 0.5f), new Vector2(0f, -610f), new Vector2(700f, 70f));
         tiresLabel.text = "TIRES";
         // bigger packs give progressively more bonus tires (base: 10 per $0.99)
-        string[] packPrices = { "$0.99", "$4.99", "$9.99", "$24.99", "$49.99", "$99.99" };
-        int[] packTires = { 10, 55, 120, 325, 700, 1500 };
         for (int i = 0; i < 6; i++)
         {
-            int amount = packTires[i]; // capture for the closure
+            int pack = i; // capture for the closure
             float x = i % 2 == 0 ? -235f : 235f;
             float y = -710f - (i / 2) * 140f;
-            Text label = MakeButton(shopScroll,
-                packTires[i] + "\n\n<size=24>" + packPrices[i] + "</size>", 34,
-                new Vector2(x, y), new Vector2(440f, 132f), () => BuyTirePack(amount),
+            Text label = MakeButton(shopScroll, "", 34,
+                new Vector2(x, y), new Vector2(440f, 132f), () => BuyTirePack(pack),
                 null, true);
+            // Unity's own font here: it falls back to the phone's fonts, so
+            // any currency sign the store sends (EUR, JPY, INR, KRW...) shows
+            label.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+            packLabels[i] = label;
             // nudge text right to make room for the tire-stack icon
             label.rectTransform.anchoredPosition = new Vector2(45f, 0f);
             label.rectTransform.sizeDelta = new Vector2(330f, 150f);
@@ -6281,6 +6677,7 @@ public class GameManager : MonoBehaviour
             iRt.sizeDelta = new Vector2(88f, 88f);
             packIcons[i] = icon;
         }
+        RefreshPackPrices();
 
         // coins for tires: three exchange packs
         var coinsLabel = MakeText(shopScroll, "CoinsLabel", 46, TextAnchor.MiddleCenter,
@@ -6386,9 +6783,19 @@ public class GameManager : MonoBehaviour
         MakeButton(revivePanel.transform, "GIVE UP", 40,
             new Vector2(0f, -300f), new Vector2(560f, 110f), DeclineRevive);
 
+        // The coin and tire counters were made first, so every window drew
+        // over them. They come to the front now, above the menu, the shop,
+        // the race screen and every other window and popup; the race finish
+        // goes back above them (as do game over and the best-run screen,
+        // made below, and the box and prize screens, which lift themselves).
+        coinPillRt.SetAsLastSibling();
+        tirePillRt.SetAsLastSibling();
+        foreach (Transform part in finishParts) part.SetAsLastSibling();
+
         BuildGameOverPanel(uiRoot);
         BuildBestPanel(uiRoot);
         BuildTutorial(uiRoot);
+        BuildCoach(uiRoot);
     }
 
     // ------------------------------------------------------------- tutorial
@@ -6399,6 +6806,8 @@ public class GameManager : MonoBehaviour
     int tutorialStep = -1;          // -1 = not coaching
     float tutorialStepT;
     bool tutorialRun;               // this run is the very first one
+    bool tutorialOnly;              // replayed from Settings: the drive ends with it
+    Text tutorialBtnLabel;
 
     static bool TutorialSeen { get { return PlayerPrefs.GetInt(TutorialKey, 0) == 1; } }
 
@@ -6462,14 +6871,21 @@ public class GameManager : MonoBehaviour
         tutorialHint.color = new Color(1f, 1f, 1f, 0f);
     }
 
-    /// <summary>PLAY. The very first time, the controls get explained first.</summary>
+    /// <summary>
+    /// PLAY. The tutorial's first stop is PLAY (and the very first PLAY ever
+    /// starts it); its last stop is PLAY too, which starts a real run.
+    /// </summary>
     void PlayPressed()
     {
-        if (TutorialSeen) { StartRun(); return; }
-
-        audioMan.PlayTap();
-        tutorialPanel.SetActive(true);
-        tutorialPanel.transform.SetAsLastSibling();
+        if (coachPhase == CoachPhase.MenuStart ||
+            (coachPhase == CoachPhase.None && !TutorialSeen))
+        {
+            audioMan.PlayTap();
+            StartCoachDrive();
+            return;
+        }
+        if (coachPhase == CoachPhase.Tour) CoachFinish();
+        StartRun();
     }
 
     void CloseTutorial()
@@ -6545,11 +6961,41 @@ public class GameManager : MonoBehaviour
             tutorialStep = -1;
             tutorialRun = false;
             tutorialHint.color = new Color(1f, 1f, 1f, 0f);
+            // replayed from Settings: that was the whole tutorial
+            if (tutorialOnly) Invoke(nameof(FinishTutorialOnly), 0.5f);
         }
         else
         {
             audioMan.PlayPop();
         }
+    }
+
+    /// <summary>A crash during a tutorial replay: the bang, then back to the menu.</summary>
+    void TutorialOnlyCrash()
+    {
+        state = State.GameOver;
+        gameOverAt = Time.unscaledTime;
+        EndTutorialHints();
+        centerText.gameObject.SetActive(false);
+        pauseButton.SetActive(false);
+        if (camFollow != null) camFollow.Shake(0.8f);
+        audioMan.PlayCrash();
+        Vector3 blastAt = car.CarModelRoot != null
+            ? car.CarModelRoot.position + Vector3.up * 0.4f
+            : car.transform.position + Vector3.up * 0.7f;
+        CrashExplosion.Play(blastAt, 1.15f);
+        audioMan.PlayExplosion();
+        audioMan.StopDriving();
+        Invoke(nameof(FinishTutorialOnly), 1.2f);
+    }
+
+    void FinishTutorialOnly()
+    {
+        tutorialOnly = false;
+        Time.timeScale = 1f;
+        pausePanel.SetActive(false);
+        audioMan.StopDriving();
+        GoToMenu();
     }
 
     /// <summary>Takes the coaching off the screen when the drive ends.</summary>
@@ -7094,6 +7540,63 @@ public class GameManager : MonoBehaviour
     /// <summary>Width of the round close buttons, in canvas units.</summary>
     const float CloseSize = 136f;
 
+    static Sprite badgeSprite;
+
+    /// <summary>
+    /// A notification dot: a plain, flat red circle with a smooth edge.
+    /// Drawn in code.
+    /// </summary>
+    static Sprite GetBadgeSprite()
+    {
+        if (badgeSprite != null) return badgeSprite;
+
+        const int S = 64;
+        const float CX = 31.5f, CY = 31.5f, R = 31f;   // fills the texture
+        var red = new Color(0.90f, 0.11f, 0.13f);
+        // with mipmaps, so it stays a clean round dot however small the
+        // screen shows it (without them a scaled-down game view makes the
+        // edge jagged)
+        var tex = new Texture2D(S, S, TextureFormat.RGBA32, true);
+        var pixels = new Color[S * S];
+        for (int y = 0; y < S; y++)
+        {
+            for (int x = 0; x < S; x++)
+            {
+                // only the edge is blended, so it is smooth rather than jagged
+                pixels[y * S + x] = new Color(red.r, red.g, red.b, Disc(x, y, CX, CY, R));
+            }
+        }
+        tex.SetPixels(pixels);
+        tex.Apply(true);
+        tex.filterMode = FilterMode.Trilinear;
+        tex.wrapMode = TextureWrapMode.Clamp;
+        badgeSprite = Sprite.Create(tex, new Rect(0, 0, S, S), new Vector2(0.5f, 0.5f), 100f);
+        return badgeSprite;
+    }
+
+    /// <summary>
+    /// Puts a red dot in the top-right corner of a button. It is a child of
+    /// the button, so it rides along with it and sinks with the face when the
+    /// button is pressed.
+    /// </summary>
+    GameObject MakeBadge(Transform button)
+    {
+        var go = new GameObject("Badge");
+        go.transform.SetParent(button, false);
+        var img = go.AddComponent<Image>();
+        img.sprite = GetBadgeSprite();
+        img.raycastTarget = false;
+        var rt = img.rectTransform;
+        rt.anchorMin = rt.anchorMax = new Vector2(1f, 1f);
+        rt.pivot = new Vector2(0.5f, 0.5f);
+        // centred on the button's rounded corner itself: 5.3 in from the top
+        // and right edges is where the corner's curve crosses the diagonal
+        // (ButtonDepth lifts everything on the face by 5, hence the -10.3)
+        rt.anchoredPosition = new Vector2(-5.3f, -10.3f);
+        rt.sizeDelta = new Vector2(28f, 28f);
+        return go;
+    }
+
     /// <summary>Room kept under a scrolling window for its footer.</summary>
     const float ScrollFooterHeight = 250f;
 
@@ -7161,6 +7664,12 @@ public class GameManager : MonoBehaviour
         return img;
     }
 
+    /// <summary>The green of the go buttons: PLAY, and BUY / SELECT in the garage.</summary>
+    static readonly Color GoGreen = new Color(0.22f, 0.70f, 0.30f);
+
+    /// <summary>A button that cannot do anything right now.</summary>
+    static readonly Color LockedGrey = new Color(0.36f, 0.34f, 0.44f);
+
     // returns the label so callers can update its text later
     /// <param name="plainFont">
     /// Use the plain font instead of the display one. The racing font is
@@ -7192,6 +7701,52 @@ public class GameManager : MonoBehaviour
     }
 
     const string SettingsIconPath = "UI/icon_settings";
+
+    /// <summary>
+    /// The in-run pause button: two white bars on a dark raised square, lined
+    /// up under the tire counter. It reaches a little past its square on
+    /// every side, so it is easy to hit without having to look.
+    /// </summary>
+    GameObject MakePauseButton(Transform parent)
+    {
+        var go = new GameObject("PauseBtn");
+        go.transform.SetParent(parent, false);
+        var img = go.AddComponent<Image>();
+        img.color = new Color(0.20f, 0.18f, 0.28f, 0.94f);
+        AddButtonDepth(img);
+        var rt = img.rectTransform;
+        rt.anchorMin = rt.anchorMax = rt.pivot = new Vector2(1f, 1f);
+        rt.anchoredPosition = new Vector2(-CounterEdge, -94f);
+        rt.sizeDelta = new Vector2(96f, 96f);
+
+        var btn = go.AddComponent<Button>();
+        btn.targetGraphic = img;
+        btn.onClick.AddListener(PauseGame);
+
+        // an invisible margin around it that still counts as the button
+        var hitGo = new GameObject("HitArea");
+        hitGo.transform.SetParent(go.transform, false);
+        var hit = hitGo.AddComponent<Image>();
+        hit.color = new Color(0f, 0f, 0f, 0f);
+        var hitRt = hit.rectTransform;
+        hitRt.anchorMin = hitRt.anchorMax = hitRt.pivot = new Vector2(0.5f, 0.5f);
+        hitRt.sizeDelta = new Vector2(136f, 128f);
+
+        // the two bars
+        for (int i = 0; i < 2; i++)
+        {
+            var barGo = new GameObject(i == 0 ? "BarLeft" : "BarRight");
+            barGo.transform.SetParent(go.transform, false);
+            var bar = barGo.AddComponent<Image>();
+            bar.color = Color.white;
+            bar.raycastTarget = false;
+            var bRt = bar.rectTransform;
+            bRt.anchorMin = bRt.anchorMax = bRt.pivot = new Vector2(0.5f, 0.5f);
+            bRt.anchoredPosition = new Vector2(i == 0 ? -15f : 15f, 0f);
+            bRt.sizeDelta = new Vector2(16f, 46f);
+        }
+        return go;
+    }
 
     /// <summary>
     /// A square button showing a white icon on a dark rounded tile. If the
@@ -7260,17 +7815,18 @@ public class GameManager : MonoBehaviour
     }
 
     /// <summary>
-    /// The big RACES button: an orange frame around a chequered flag, with the
-    /// word in orange on a dark stripe across the middle so it stays readable
-    /// against the black and white squares.
+    /// The big RACE button: a black frame around a chequered flag, with the
+    /// word in white over a dark wash so it stays readable against the black
+    /// and white squares.
     /// </summary>
     Text MakeRaceButton(Transform parent, Vector2 offset, Vector2 size)
     {
-        // orange frame - this is what the button tints when pressed
+        // black frame - this is what the button tints when pressed. Not quite
+        // pure black, so its raised edge still shows against the dark flag.
         var go = new GameObject("RACESBtn");
         go.transform.SetParent(parent, false);
         var frame = go.AddComponent<Image>();
-        frame.color = new Color(0.96f, 0.47f, 0.13f);
+        frame.color = new Color(0.10f, 0.10f, 0.11f);
         AddButtonDepth(frame);
         var rt = frame.rectTransform;
         rt.anchorMin = rt.anchorMax = rt.pivot = new Vector2(0.5f, 0.5f);
@@ -7315,11 +7871,12 @@ public class GameManager : MonoBehaviour
         cRt.localRotation = Quaternion.Euler(0f, 0f, -7f);
 
         // the dark wash over the whole flag - the chequers show through it
-        // evenly, and the orange word reads anywhere on it
+        // evenly, and the white word (with its black outline) stands out
+        // anywhere on it
         var bandGo = new GameObject("Shade");
         bandGo.transform.SetParent(faceGo.transform, false);
         var band = bandGo.AddComponent<Image>();
-        band.color = new Color(0f, 0f, 0f, 0.72f);
+        band.color = new Color(0f, 0f, 0f, 0.80f);
         band.raycastTarget = false;
         var bRt = band.rectTransform;
         bRt.anchorMin = Vector2.zero;
@@ -7328,8 +7885,8 @@ public class GameManager : MonoBehaviour
 
         var label = MakeText(faceGo.transform, "Label", 64, TextAnchor.MiddleCenter,
             new Vector2(0.5f, 0.5f), Vector2.zero, size);
-        label.text = "RACES";
-        label.color = new Color(1f, 0.55f, 0.08f);
+        label.text = "RACE";
+        label.color = Color.white;
         return label;
     }
 

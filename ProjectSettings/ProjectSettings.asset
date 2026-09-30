@@ -168,7 +168,7 @@ PlayerSettings:
   applicationIdentifier:
     Android: com.driftlineeternal.game
     Standalone: com.UnityTechnologies.Mobile3DTemplate
-    iPhone: com.delanolenox.driftlineeternal
+    iPhone: com.driftlineeternal.game
   buildNumber:
     Standalone: 0
     VisionOS: 0
@@ -902,6 +902,7 @@ PlayerSettings:
   XboxOneOverrideIdentityPublisher: 
   vrEditorSettings: {}
   cloudServicesEnabled:
+    Purchasing: 1
     UNet: 1
   luminIcon:
     m_Name: 

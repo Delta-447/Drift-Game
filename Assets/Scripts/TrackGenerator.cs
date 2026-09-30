@@ -226,6 +226,64 @@ public class TrackGenerator : MonoBehaviour
 
     [Tooltip("Menu backdrop mode: the road stays dead straight.")]
     public bool forceStraight;
+
+    [Tooltip("Metres of straight road ahead of the car when a track starts " +
+             "(0 = the usual short run-in). The tutorial asks for a long one.")]
+    public float openingStraight;
+
+    // ---- fixed layout (the tutorial): the same road every time
+    bool fixedLayout;
+    Random.State fixedState, outerState;
+    // the road's shape has a sequence of its own: coins and scenery start and
+    // stop with the game, and must not shift which numbers the corners get
+    Random.State shapeState, generalState;
+    int fixedDepth;
+
+    /// <summary>
+    /// With a seed, the road is built from its own random sequence - the same
+    /// corners, coins and scenery every time, whatever else in the game is
+    /// using random numbers meanwhile. Seed 0 goes back to a new road each
+    /// time. Set it before <see cref="Init"/>.
+    /// </summary>
+    public void UseFixedLayout(int seed)
+    {
+        if (seed == 0) { fixedLayout = false; return; }
+        var saved = Random.state;
+        Random.InitState(seed);
+        fixedState = Random.state;
+        Random.InitState(seed ^ 0x5bd1e995);
+        shapeState = Random.state;
+        Random.state = saved;
+        fixedLayout = true;
+    }
+
+    // the corners and slopes, from their own sequence
+    void ShapeIn()
+    {
+        if (!fixedLayout || fixedDepth == 0) return;
+        generalState = Random.state;
+        Random.state = shapeState;
+    }
+
+    void ShapeOut()
+    {
+        if (!fixedLayout || fixedDepth == 0) return;
+        shapeState = Random.state;
+        Random.state = generalState;
+    }
+
+    // swaps the road's own sequence in while it is being built, and back out
+    void FixedIn()
+    {
+        if (!fixedLayout) return;
+        if (fixedDepth++ == 0) { outerState = Random.state; Random.state = fixedState; }
+    }
+
+    void FixedOut()
+    {
+        if (!fixedLayout || fixedDepth == 0) return;
+        if (--fixedDepth == 0) { fixedState = Random.state; Random.state = outerState; }
+    }
     float straightUntil = -1f;
 
     /// <summary>
@@ -494,6 +552,14 @@ public class TrackGenerator : MonoBehaviour
     public void Init(Vector3 origin, float startHeadingDeg,
                      float dayNightBlend = 0f, float snowAmount = 0f)
     {
+        fixedDepth = 0;
+        FixedIn();
+        try { InitTrack(origin, startHeadingDeg, dayNightBlend, snowAmount); }
+        finally { FixedOut(); }
+    }
+
+    void InitTrack(Vector3 origin, float startHeadingDeg, float dayNightBlend, float snowAmount)
+    {
         Clear();
         CreateMaterials();
         biomeBlend = Mathf.Clamp01(dayNightBlend);
@@ -528,7 +594,7 @@ public class TrackGenerator : MonoBehaviour
         passStartDistance = -1f;
         passEndDistance = -1f;
 
-        segmentRemaining = roadBehindStart + firstObstacleAt * 0.8f;
+        segmentRemaining = roadBehindStart + Mathf.Max(firstObstacleAt * 0.8f, openingStraight);
         segmentCurvature = 0f;
         lastWasCorner = false;
         lastCornerDir = Random.value < 0.5f ? -1 : 1;
@@ -644,6 +710,13 @@ public class TrackGenerator : MonoBehaviour
 
     public void EnsureGenerated(float carDistance)
     {
+        FixedIn();
+        try { GenerateUpTo(carDistance); }
+        finally { FixedOut(); }
+    }
+
+    void GenerateUpTo(float carDistance)
+    {
         while (frontDistance < carDistance + aheadDistance)
         {
             GenerateOneSample();
@@ -676,13 +749,19 @@ public class TrackGenerator : MonoBehaviour
 
     void GenerateOneSample()
     {
-        if (segmentRemaining <= 0f) StartNewSegment();
+        if (segmentRemaining <= 0f)
+        {
+            ShapeIn();
+            StartNewSegment();
+            ShapeOut();
+        }
 
         // vertical profile: only the mountains have real gradients, and the
         // slope eases toward its target so crests and dips stay driveable
         slopeRemaining -= SampleSpacing;
         if (slopeRemaining <= 0f)
         {
+            ShapeIn();
             slopeRemaining = Random.Range(slopeSegmentLength.x, slopeSegmentLength.y);
             // The mountain is a CLIMB. Every stretch goes up; the only variety
             // is how steeply, with the occasional near-flat shelf to breathe.
@@ -709,6 +788,7 @@ public class TrackGenerator : MonoBehaviour
             {
                 targetSlope = 0f;
             }
+            ShapeOut();
         }
         if (descendMeters > 0f)
         {
@@ -1592,6 +1672,56 @@ public class TrackGenerator : MonoBehaviour
                 if (traffic[i].go != null) Object.Destroy(traffic[i].go);
                 traffic.RemoveAt(i);
             }
+        }
+    }
+
+    // ------------------------------------------------------------ tutorial
+
+    /// <summary>
+    /// Puts one power-up of a chosen type on the road at a chosen spot - the
+    /// tutorial lays each item out in turn. False if that stretch of road has
+    /// not been built yet (try again a moment later).
+    /// </summary>
+    public bool PlacePowerUp(float dist, float lateral, PowerUpType type)
+    {
+        if (dist > frontDistance - 5f) return false;
+        SamplePose(dist, out Vector3 pos, out Vector3 fwd, out _);
+        Vector3 right = Vector3.Cross(Vector3.up, fwd).normalized;
+        float maxLat = roadWidth * 0.5f - 2f;
+        float lat = Mathf.Clamp(lateral, -maxLat, maxLat);
+
+        var root = new GameObject("PowerUp_" + type);
+        root.transform.SetParent(transform, false);
+        root.transform.position = pos + right * lat + Vector3.up * 1.2f;
+        root.AddComponent<Coin>().spinSpeed = 140f;
+        BuildPowerUpShape(root.transform, root.transform.position, type);
+        powerUps.Add(new PowerUpData { distance = dist, lateral = lat, type = type, go = root });
+        return true;
+    }
+
+    /// <summary>Whether the power-up placed at <paramref name="dist"/> is still on the road, and where it is.</summary>
+    public bool PowerUpAt(float dist, out Vector3 worldPos)
+    {
+        for (int i = 0; i < powerUps.Count; i++)
+        {
+            if (Mathf.Abs(powerUps[i].distance - dist) < 0.01f && powerUps[i].go != null)
+            {
+                worldPos = powerUps[i].go.transform.position;
+                return true;
+            }
+        }
+        worldPos = Vector3.zero;
+        return false;
+    }
+
+    /// <summary>Takes the power-up at <paramref name="dist"/> off the road, if it is there.</summary>
+    public void RemovePowerUpAt(float dist)
+    {
+        for (int i = powerUps.Count - 1; i >= 0; i--)
+        {
+            if (Mathf.Abs(powerUps[i].distance - dist) >= 0.01f) continue;
+            if (powerUps[i].go != null) Object.Destroy(powerUps[i].go);
+            powerUps.RemoveAt(i);
         }
     }
 

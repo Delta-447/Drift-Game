@@ -68,3 +68,7 @@ Android Build/
 *.a
 *.xcodeproj/
 *.xcworkspace/
+
+# Backup copies made before each change - kept on this computer, never pushed
+_backup_before_*/
+_to_delete/
