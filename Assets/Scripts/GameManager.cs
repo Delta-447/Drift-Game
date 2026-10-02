@@ -543,7 +543,7 @@ public partial class GameManager : MonoBehaviour
     // Bump this string to wipe every save on the next launch - useful for
     // testing first-run flow and the new-high-score reveal. It only fires once
     // per token, so a player never loses progress twice to the same bump.
-    const string SaveResetToken = "reset-2026-09-13-tutorial";
+    const string SaveResetToken = "reset-2026-10-02-second-reset";
 
     static void WipeSaveOnce()
     {
@@ -848,7 +848,7 @@ public partial class GameManager : MonoBehaviour
 
     void Start()
     {
-        car = FindFirstObjectByType<CarController>();
+        car = FindAnyObjectByType<CarController>();
         if (car == null)
         {
             Debug.LogError("GameManager: no CarController found in the scene. " +
@@ -857,7 +857,7 @@ public partial class GameManager : MonoBehaviour
             return;
         }
 
-        track = FindFirstObjectByType<TrackGenerator>();
+        track = FindAnyObjectByType<TrackGenerator>();
         if (track == null)
         {
             var go = new GameObject("TrackGenerator");
@@ -884,7 +884,7 @@ public partial class GameManager : MonoBehaviour
         GameObject oldMenu = GameObject.Find("MainMenuPanel");
         if (oldMenu != null) oldMenu.SetActive(false);
 
-        audioMan = FindFirstObjectByType<AudioManager>();
+        audioMan = FindAnyObjectByType<AudioManager>();
         if (audioMan == null) audioMan = gameObject.AddComponent<AudioManager>();
         audioMan.SetCar(car);
 
@@ -1298,7 +1298,10 @@ public partial class GameManager : MonoBehaviour
             EquipSelected();
             car.ClearScorch();
         }
-        menuPanel.SetActive(true);
+        // On the very first launch the tutorial starts by itself as soon as
+        // the opening title is done; the menu stays hidden until then, so the
+        // player goes straight from the title into the drive
+        menuPanel.SetActive(!coachWanted);
         settingsPanel.SetActive(false);
         garagePanel.SetActive(false);
         gameOverPanel.SetActive(false);
@@ -1671,7 +1674,7 @@ public partial class GameManager : MonoBehaviour
         new Color(0.8f, 0.4f, 1f),     // double score
         new Color(0.35f, 1f, 0.45f),   // springs
     };
-    Text questMultText, questTiresText, itemHudText, multHudText;
+    Text questMultText, itemHudText, multHudText;
     readonly Text[] pauseQuestRows = new Text[3];
     Text reviveTireLabel, reviveAdLabel, reviveTimerText, reviveHaveText;
     /// <summary>An ad was asked for and has not come back yet.</summary>
@@ -1809,7 +1812,7 @@ public partial class GameManager : MonoBehaviour
     void CacheLighting()
     {
         if (lightingCached) return;
-        foreach (var l in FindObjectsByType<Light>(FindObjectsSortMode.None))
+        foreach (var l in FindObjectsByType<Light>())
         {
             if (l.type == LightType.Directional) { sunLight = l; break; }
         }
@@ -1893,6 +1896,16 @@ public partial class GameManager : MonoBehaviour
     Text raceHudText;
     readonly Text[] raceLevelLabels = new Text[RaceMode.TotalLevels];
     readonly Text[] upgradeLabels = new Text[3];
+    // the price bar along the bottom of each upgrade tile
+    readonly Text[] upgradePriceTexts = new Text[3];
+    readonly RawImage[] upgradePriceCoins = new RawImage[3];
+    readonly GameObject[] upgradeAdChips = new GameObject[3];
+    GameObject upgradeAdPopup;
+    RaceMode.Upgrade upgradeAdTarget;
+
+    // one upgrade a day can be paid for with an ad instead of coins
+    const string UpgradeAdKey = "UpgradeAdDay";
+    static bool UpgradeAdReady { get { return PlayerPrefs.GetString(UpgradeAdKey, "") != TodayKey(); } }
 
     void EnsureRace()
     {
@@ -1907,7 +1920,9 @@ public partial class GameManager : MonoBehaviour
         int cost = RaceMode.CostOf(u);
         if (totalCoins < cost)
         {
-            upgradeLabels[(int)u].text = "NOT ENOUGH\nCOINS";
+            // short of coins: today's free one can still be had for an ad
+            if (UpgradeAdReady) { OpenUpgradeAd(u); return; }
+            FlashUpgradeLine(u, "NOT ENOUGH COINS");
             audioMan.PlayTap();
             return;
         }
@@ -1917,6 +1932,179 @@ public partial class GameManager : MonoBehaviour
         ApplyUpgrades();
         RefreshRacePanel();
         audioMan.PlayCoin();
+    }
+
+    /// <summary>"Not enough coins - watch an ad for it?", over the race screen.</summary>
+    void BuildUpgradeAdPopup()
+    {
+        upgradeAdPopup = new GameObject("UpgradeAdPopup");
+        upgradeAdPopup.transform.SetParent(racePanel.transform, false);
+        var rt = upgradeAdPopup.AddComponent<RectTransform>();
+        rt.anchorMin = Vector2.zero;
+        rt.anchorMax = Vector2.one;
+        rt.offsetMin = rt.offsetMax = Vector2.zero;
+
+        var dimGo = new GameObject("Dim");
+        dimGo.transform.SetParent(upgradeAdPopup.transform, false);
+        var dim = dimGo.AddComponent<Image>();
+        dim.color = new Color(0f, 0f, 0f, 0.75f);
+        var dimRt = dim.rectTransform;
+        dimRt.anchorMin = Vector2.zero;
+        dimRt.anchorMax = Vector2.one;
+        dimRt.offsetMin = dimRt.offsetMax = Vector2.zero;    // blocks the screen behind
+
+        var bodyGo = new GameObject("Body");
+        bodyGo.transform.SetParent(upgradeAdPopup.transform, false);
+        var bodyRt = bodyGo.AddComponent<RectTransform>();
+        bodyRt.anchorMin = Vector2.zero;
+        bodyRt.anchorMax = Vector2.one;
+        bodyRt.offsetMin = bodyRt.offsetMax = Vector2.zero;
+        Transform body = bodyGo.transform;
+        var pop = bodyGo.AddComponent<PopIn>();
+        pop.dimmer = dim;
+        pop.dimmerAlpha = 0.75f;
+
+        MakeCard(body, new Vector2(0f, 20f), new Vector2(880f, 640f),
+            new Color(0.13f, 0.09f, 0.2f, 1f));
+        var title = MakeText(body, "AdTitle", 50, TextAnchor.MiddleCenter,
+            new Vector2(0.5f, 0.5f), new Vector2(0f, 260f), new Vector2(820f, 80f));
+        title.text = "NOT ENOUGH COINS";
+        title.color = new Color(1f, 0.55f, 0.45f);
+        var text = MakeText(body, "AdText", 40, TextAnchor.MiddleCenter,
+            new Vector2(0.5f, 0.5f), new Vector2(0f, 120f), new Vector2(820f, 170f), true);
+        text.text = "Watch an ad to get this upgrade\nfor free? One free upgrade a day.";
+        text.horizontalOverflow = HorizontalWrapMode.Wrap;
+        text.lineSpacing = 1.1f;
+        MakeButton(body, "WATCH AD", 48, new Vector2(0f, -60f), new Vector2(560f, 130f),
+            WatchAdForUpgrade, GoGreen);
+        MakeButton(body, "BACK", 40, new Vector2(0f, -205f), new Vector2(400f, 100f),
+            CloseUpgradeAd, LockedGrey);
+
+        upgradeAdPopup.SetActive(false);
+    }
+
+    /// <summary>A short message in place of a tile's level line, then back.</summary>
+    void FlashUpgradeLine(RaceMode.Upgrade u, string message)
+    {
+        upgradeLabels[(int)u].text = Loc.T(message);
+        CancelInvoke(nameof(RefreshRacePanel));
+        Invoke(nameof(RefreshRacePanel), 1.6f);
+    }
+
+    void OpenUpgradeAd(RaceMode.Upgrade u)
+    {
+        upgradeAdTarget = u;
+        upgradeAdPopup.SetActive(true);
+        audioMan.PlayPop();
+    }
+
+    void CloseUpgradeAd()
+    {
+        upgradeAdPopup.SetActive(false);
+        audioMan.PlayTap();
+    }
+
+    void WatchAdForUpgrade()
+    {
+        upgradeAdPopup.SetActive(false);
+        RaceMode.Upgrade u = upgradeAdTarget;
+        upgradeLabels[(int)u].text = Loc.T("LOADING AD...");
+        AdManager.ShowRewarded("upgrade", () =>
+        {
+            // only reached when the ad reports a completed view
+            PlayerPrefs.SetString(UpgradeAdKey, TodayKey());
+            if (!RaceMode.IsMaxed(u)) RaceMode.Buy(u);
+            PlayerPrefs.Save();
+            ApplyUpgrades();
+            CancelInvoke(nameof(RefreshRacePanel));
+            RefreshRacePanel();
+            audioMan.PlayCoin();
+        },
+        () =>
+        {
+            // nothing to show, or closed early: no upgrade, and the free one
+            // is still there to try again
+            FlashUpgradeLine(u, "NO AD AVAILABLE");
+            audioMan.PlayTap();
+        });
+    }
+
+    /// <summary>
+    /// The price bar: coin, amount (red when it is out of reach) and, while
+    /// today's free one is unused, the green play sign - centred as a group.
+    /// </summary>
+    void RefreshUpgradePrice(int u)
+    {
+        if (upgradePriceTexts[u] == null) return;
+        var up = (RaceMode.Upgrade)u;
+        bool maxed = RaceMode.IsMaxed(up);
+        int cost = RaceMode.CostOf(up);
+        bool afford = totalCoins >= cost;
+        bool adOffer = !maxed && !afford && UpgradeAdReady;
+
+        Text price = upgradePriceTexts[u];
+        price.text = maxed ? "MAX" : FormatCount(cost);
+        price.color = maxed ? new Color(0.65f, 1f, 0.7f)
+                    : afford ? Color.white : new Color(1f, 0.62f, 0.58f);
+        upgradePriceCoins[u].gameObject.SetActive(!maxed);
+        upgradeAdChips[u].SetActive(adOffer);
+
+        const float Coin = 46f, Gap = 10f, Chip = 42f;
+        float textW = price.preferredWidth;
+        float total = (maxed ? 0f : Coin + Gap) + textW + (adOffer ? Gap + Chip : 0f);
+        float left = -total * 0.5f;
+        // only across: up and down belong to the button's press
+        if (!maxed)
+        {
+            SetX(upgradePriceCoins[u].rectTransform, left + Coin * 0.5f);
+            left += Coin + Gap;
+        }
+        SetX(price.rectTransform, left + textW * 0.5f);
+        left += textW;
+        if (adOffer) SetX((RectTransform)upgradeAdChips[u].transform, left + Gap + Chip * 0.5f);
+    }
+
+    static void SetX(RectTransform rt, float x)
+    {
+        rt.anchoredPosition = new Vector2(x, rt.anchoredPosition.y);
+    }
+
+    static Texture2D adChipTex;
+
+    /// <summary>The ad sign: a white play triangle on a green rounded square.</summary>
+    static Texture2D GetAdChipTexture()
+    {
+        if (adChipTex != null) return adChipTex;
+        const int S = 64;
+        const float Rad = 16f;
+        var tex = new Texture2D(S, S, TextureFormat.RGBA32, true);
+        Color green = new Color(0.22f, 0.70f, 0.30f, 1f);
+        for (int y = 0; y < S; y++)
+        {
+            for (int x = 0; x < S; x++)
+            {
+                float fx = x + 0.5f, fy = y + 0.5f;
+                float qx = Mathf.Max(Mathf.Abs(fx - 32f) - (32f - Rad), 0f);
+                float qy = Mathf.Max(Mathf.Abs(fy - 32f) - (32f - Rad), 0f);
+                float edge = Rad - Mathf.Sqrt(qx * qx + qy * qy);   // how far inside
+                float box = Mathf.Clamp01(edge + 0.5f);
+                // a white rim, so it stands out on the green tile as well
+                float rim = 1f - Mathf.Clamp01(edge - 3.5f);
+                // the triangle, pointing right, its weight on the middle
+                float t = (fx - 23f) / 26f;
+                float half = (1f - t) * 15f;
+                float tri = t >= 0f && t <= 1f ? Mathf.Clamp01(half - Mathf.Abs(fy - 32f) + 0.5f) : 0f;
+                tri *= Mathf.Clamp01(fx - 23f + 0.5f);
+                Color c = Color.Lerp(green, Color.white, Mathf.Max(tri, rim));
+                c.a = box;
+                tex.SetPixel(x, y, c);
+            }
+        }
+        tex.Apply(true);
+        tex.wrapMode = TextureWrapMode.Clamp;
+        tex.filterMode = FilterMode.Trilinear;
+        adChipTex = tex;
+        return tex;
     }
 
     /// <summary>Pushes upgrade effects onto the car.</summary>
@@ -1932,10 +2120,9 @@ public partial class GameManager : MonoBehaviour
         string value = u == RaceMode.Upgrade.CoinBonus ? RaceMode.CoinBonusLabel()
                      : u == RaceMode.Upgrade.Speed ? "+" + Loc.F(useMph ? "{0} MPH" : "{0} KM/H", Mathf.RoundToInt(RaceMode.SpeedBonus() * SpeedoScale * (useMph ? 2.23694f : 3.6f)))
                      : "+" + Mathf.RoundToInt(RaceMode.Strength() * 100f) + "%";
-        string cost = RaceMode.IsMaxed(u) ? Loc.T("MAX") : RaceMode.CostOf(u).ToString();
         // the picture carries the meaning, so the text just states the numbers
-        return "<size=33>" + Loc.F("LV {0}", lv) + "</size>\n<size=28>" + value
-               + "</size>\n<size=28>" + cost + "</size>";
+        // the price has a bar of its own along the bottom of the tile
+        return "<size=33>" + Loc.F("LV {0}", lv) + "</size>\n<size=28>" + value + "</size>";
     }
 
     void OpenRaces()
@@ -1948,6 +2135,7 @@ public partial class GameManager : MonoBehaviour
 
     void CloseRaces()
     {
+        if (upgradeAdPopup != null) upgradeAdPopup.SetActive(false);
         racePanel.SetActive(false);
         menuPanel.SetActive(true);
         audioMan.PlayTap();
@@ -1958,6 +2146,7 @@ public partial class GameManager : MonoBehaviour
         for (int u = 0; u < 3; u++)
         {
             upgradeLabels[u].text = UpgradeLine((RaceMode.Upgrade)u);
+            RefreshUpgradePrice(u);
         }
         for (int i = 0; i < RaceMode.TotalLevels; i++)
         {
@@ -2713,9 +2902,10 @@ public partial class GameManager : MonoBehaviour
         title.text = "MYSTERY WHEEL";
         title.color = new Color(1f, 0.72f, 0.12f);
 
-        wheelSpinsText = MakeText(wheelPanel.transform, "WheelSpins", 40, TextAnchor.MiddleCenter,
-            new Vector2(0.5f, 0.5f), new Vector2(0f, 610f), new Vector2(900f, 70f));
-        wheelSpinsText.color = new Color(0.8f, 0.85f, 1f);
+        // information is set upright and plain - the racing font is for titles
+        wheelSpinsText = MakeText(wheelPanel.transform, "WheelSpins", 50, TextAnchor.MiddleCenter,
+            new Vector2(0.5f, 0.5f), new Vector2(0f, 610f), new Vector2(900f, 70f), true);
+        wheelSpinsText.color = new Color(0.86f, 0.92f, 1f);
 
         // the disc itself, with its labels riding around with it
         var discGo = new GameObject("Disc");
@@ -2780,7 +2970,7 @@ public partial class GameManager : MonoBehaviour
         ptrRt.sizeDelta = new Vector2(84f, 100f);
 
         wheelResultText = MakeText(wheelPanel.transform, "WheelResult", 50, TextAnchor.MiddleCenter,
-            new Vector2(0.5f, 0.5f), new Vector2(0f, -280f), new Vector2(960f, 90f));
+            new Vector2(0.5f, 0.5f), new Vector2(0f, -280f), new Vector2(960f, 90f), true);
 
         wheelSpinLabel = MakeButton(wheelPanel.transform, "SPIN", 54,
             new Vector2(0f, -390f), new Vector2(520f, 124f), SpinWheel,
@@ -3372,7 +3562,6 @@ public partial class GameManager : MonoBehaviour
         menuPanel.SetActive(false);
         questsPanel.SetActive(true);
         questMultText.text = Loc.F("SCORE MULTIPLIER  X{0}", Mathf.Min(30, 1 + questLevel));
-        questTiresText.text = Loc.F("TIRES  {0}", tires);
         for (int i = 0; i < 3; i++) questRowTexts[i].text = QuestLine(i);
         audioMan.PlayTap();
     }
@@ -3700,7 +3889,7 @@ public partial class GameManager : MonoBehaviour
                                         .ToString("0.#")));
 
             int cost = ItemUpgrades.Cost(i);
-            itemUpButtons[i].text = maxed ? "MAX" : cost.ToString();
+            itemUpButtons[i].text = maxed ? "MAX" : FormatCount(cost);
             itemUpCoins[i].gameObject.SetActive(!maxed);
             // greyed out when it is maxed or you cannot afford it yet
             var img = itemUpButtons[i].transform.parent.GetComponent<Image>();
@@ -4046,15 +4235,19 @@ public partial class GameManager : MonoBehaviour
         icoRt.anchoredPosition = new Vector2(0f, 190f);
         icoRt.sizeDelta = new Vector2(460f, 460f);
 
-        revealText = MakeText(revealPanel.transform, "PrizeText", 80, TextAnchor.MiddleCenter,
-            new Vector2(0.5f, 0.5f), new Vector2(0f, -170f), new Vector2(1000f, 220f));
-        revealText.color = new Color(0.12f, 0.08f, 0.02f);
+        // The words: big, upright and dark, straight onto the bright colour.
+        // No black outline - on dark letters it only thickens them into a
+        // smudge - so they stay crisp against the colour and the rays alike.
+        revealText = MakeText(revealPanel.transform, "PrizeText", 84, TextAnchor.MiddleCenter,
+            new Vector2(0.5f, 0.5f), new Vector2(0f, -175f), new Vector2(1000f, 220f), true);
         revealText.horizontalOverflow = HorizontalWrapMode.Wrap;
+        revealText.lineSpacing = 1.05f;
+        Destroy(revealText.GetComponent<Outline>());
 
-        revealHint = MakeText(revealPanel.transform, "PrizeHint", 40, TextAnchor.MiddleCenter,
-            new Vector2(0.5f, 0.5f), new Vector2(0f, -420f), new Vector2(900f, 80f));
+        revealHint = MakeText(revealPanel.transform, "PrizeHint", 42, TextAnchor.MiddleCenter,
+            new Vector2(0.5f, 0.5f), new Vector2(0f, -410f), new Vector2(900f, 80f), true);
         revealHint.text = "TAP TO CONTINUE";
-        revealHint.color = new Color(0.15f, 0.10f, 0.03f, 0.75f);
+        Destroy(revealHint.GetComponent<Outline>());
 
         // the whole screen is the dismiss button
         var btn = revealPanel.AddComponent<Button>();
@@ -4084,10 +4277,12 @@ public partial class GameManager : MonoBehaviour
                                        : new Color(1f, 0.78f, 0.12f);
         revealBack.color = revealTint;
         revealText.text = text;
-        revealText.color = tokenBox || token ? new Color(0.02f, 0.08f, 0.20f)
-                                             : new Color(0.14f, 0.09f, 0.02f);
+        // near-black with a hint of the screen's colour: the strongest
+        // contrast there is against the gold and the blue
+        revealText.color = tokenBox || token ? new Color(0.02f, 0.06f, 0.16f)
+                                             : new Color(0.12f, 0.07f, 0.01f);
         revealHint.color = new Color(revealText.color.r, revealText.color.g,
-                                     revealText.color.b, 0.7f);
+                                     revealText.color.b, 0f);
 
         revealT = 0f;
         revealPanel.SetActive(true);
@@ -4120,7 +4315,7 @@ public partial class GameManager : MonoBehaviour
             Vector3.one * Mathf.Lerp(0.6f, 1f, 1f - Mathf.Pow(1f - tp, 3f));
 
         // the hint pulses once the animation has finished
-        float ha = revealT < 0.9f ? 0f : 0.45f + 0.35f * Mathf.Sin(revealT * 4f);
+        float ha = revealT < 0.9f ? 0f : 0.65f + 0.3f * Mathf.Sin(revealT * 4f);
         Color hc = revealHint.color;
         revealHint.color = new Color(hc.r, hc.g, hc.b, ha);
     }
@@ -4284,7 +4479,7 @@ public partial class GameManager : MonoBehaviour
         {
             if (packLabels[i] == null) continue;
             string price = IapStore.PriceFor(IapStore.TirePackIds[i], PackFallbackPrices[i]);
-            packLabels[i].text = PackTires[i] + "\n\n<size=24>" + price + "</size>";
+            packLabels[i].text = PackTires[i] + "\n<size=36>" + price + "</size>";
         }
     }
 
@@ -5033,7 +5228,7 @@ public partial class GameManager : MonoBehaviour
         }
         else if (d.currency != Currency.Coins)
         {
-            shopPrice.text = d.cost.ToString();
+            shopPrice.text = FormatCount(d.cost);
             shopPrice.color = TokenColors[(int)d.currency];
             shopActionLabel.text = "BUY";
             // show that brand's token model beside the price
@@ -5041,14 +5236,16 @@ public partial class GameManager : MonoBehaviour
             if (shopShowcaseRoot != null) shopShowcaseRoot.SetActive(true);
             garagePriceIcon.texture = Resources.Load<Texture2D>(TokenIcons[(int)d.currency]);
             garagePriceIcon.gameObject.SetActive(true);
+            IconBeforeText(garagePriceIcon, shopPrice);
         }
         else
         {
-            shopPrice.text = d.cost.ToString();
+            shopPrice.text = FormatCount(d.cost);
             shopPrice.color = new Color(1f, 0.8f, 0.3f);
             shopActionLabel.text = "BUY";
             garagePriceIcon.texture = Resources.Load<Texture2D>(CoinIconPath);
             garagePriceIcon.gameObject.SetActive(true);
+            IconBeforeText(garagePriceIcon, shopPrice);
         }
 
         // green to buy or equip; grey when the car cannot be had from here
@@ -5436,7 +5633,7 @@ public partial class GameManager : MonoBehaviour
         // watching the wreck you just made. Clear the fireball, put the car
         // back on its wheels and snap the camera to the normal driving view so
         // the three seconds are spent looking at what is coming.
-        foreach (var blast in FindObjectsByType<CrashExplosion>(FindObjectsSortMode.None))
+        foreach (var blast in FindObjectsByType<CrashExplosion>())
         {
             Destroy(blast.gameObject);
         }
@@ -5540,13 +5737,13 @@ public partial class GameManager : MonoBehaviour
         // the opening title sequence owns the screen until it finishes
         if (introRunning)
         {
-            var intro = FindFirstObjectByType<TitleIntro>();
+            var intro = FindAnyObjectByType<TitleIntro>();
             if (intro != null) introSeen = true;
 
             // the intro is created part way through the logo screen, so until
             // it shows up the splash still counts as "opening in progress"
             bool openingUp = intro != null ||
-                (!introSeen && FindFirstObjectByType<SplashScreen>() != null);
+                (!introSeen && FindAnyObjectByType<SplashScreen>() != null);
 
             if (!openingUp)
             {
@@ -6077,7 +6274,7 @@ public partial class GameManager : MonoBehaviour
         // --- interactive panels need a raycaster + an EventSystem
         uiRootCanvas = canvasGo.transform;
         canvasGo.AddComponent<GraphicRaycaster>();
-        if (FindFirstObjectByType<UnityEngine.EventSystems.EventSystem>() == null)
+        if (FindAnyObjectByType<UnityEngine.EventSystems.EventSystem>() == null)
         {
             var es = new GameObject("EventSystem");
             es.AddComponent<UnityEngine.EventSystems.EventSystem>();
@@ -6286,8 +6483,8 @@ public partial class GameManager : MonoBehaviour
         garageCarsTab = MakeTabGroup(garagePanel.transform, "CarsTab");
         garagePaintTab = MakeTabGroup(garagePanel.transform, "PaintTab");
         BuildPaintTab(garagePaintTab.transform);
-        shopCoinsText = MakeText(garagePanel.transform, "ShopCoins", 42, TextAnchor.MiddleCenter,
-            new Vector2(0.5f, 0.5f), new Vector2(0f, 370f), new Vector2(700f, 70f));
+        shopCoinsText = MakeText(garagePanel.transform, "ShopCoins", 46, TextAnchor.MiddleCenter,
+            new Vector2(0.5f, 0.5f), new Vector2(0f, 370f), new Vector2(800f, 70f), true);
         shopCoinsText.color = new Color(1f, 0.82f, 0.1f);
         shopCarName = MakeText(garageCarsTab.transform, "ShopCarName", 44, TextAnchor.MiddleCenter,
             new Vector2(0.5f, 0.5f), new Vector2(0f, 250f), new Vector2(460f, 100f));
@@ -6312,8 +6509,8 @@ public partial class GameManager : MonoBehaviour
         gCarGo.transform.SetSiblingIndex(1);
         shopStats = MakeText(garageCarsTab.transform, "ShopStats", 38, TextAnchor.MiddleCenter,
             new Vector2(0.5f, 0.5f), new Vector2(0f, -170f), new Vector2(950f, 70f));
-        shopPrice = MakeText(garageCarsTab.transform, "ShopPrice", 40, TextAnchor.MiddleCenter,
-            new Vector2(0.5f, 0.5f), new Vector2(0f, -250f), new Vector2(800f, 70f));
+        shopPrice = MakeText(garageCarsTab.transform, "ShopPrice", 50, TextAnchor.MiddleCenter,
+            new Vector2(0.5f, 0.5f), new Vector2(0f, -250f), new Vector2(860f, 70f), true);
         garagePriceIcon = MakeCurrencyIcon(garageCarsTab.transform, new Vector2(0.5f, 0.5f),
             new Vector2(-235f, -250f), 52f, false);
         shopActionLabel = MakeButton(garageCarsTab.transform, "BUY", 48,
@@ -6504,9 +6701,9 @@ public partial class GameManager : MonoBehaviour
             upgradeLabels[u] = MakeButton(raceScroll, "Upg" + u, 30,
                 new Vector2(-315f + u * 315f, 430f), new Vector2(305f, 380f),
                 () => BuyUpgrade(up), upgColors[u], true);
-            // the numbers sit under the picture
-            upgradeLabels[u].rectTransform.anchoredPosition = new Vector2(0f, -97f);
-            upgradeLabels[u].rectTransform.sizeDelta = new Vector2(295f, 150f);
+            // the level and what it gives sit under the picture
+            upgradeLabels[u].rectTransform.anchoredPosition = new Vector2(0f, -48f);
+            upgradeLabels[u].rectTransform.sizeDelta = new Vector2(295f, 90f);
 
             // and what the upgrade is, across the top
             var upgName = MakeText(upgradeLabels[u].transform.parent, "UpgName" + u, 38,
@@ -6521,8 +6718,29 @@ public partial class GameManager : MonoBehaviour
             ico.texture = Resources.Load<Texture2D>(upgIcons[u]);
             var icoRt = ico.rectTransform;
             icoRt.anchorMin = icoRt.anchorMax = icoRt.pivot = new Vector2(0.5f, 0.5f);
-            icoRt.anchoredPosition = new Vector2(0f, 56f);
-            icoRt.sizeDelta = new Vector2(132f, 132f);
+            icoRt.anchoredPosition = new Vector2(0f, 54f);
+            icoRt.sizeDelta = new Vector2(116f, 116f);
+
+            // the price, on a darker bar along the bottom: a coin, the amount,
+            // and the green play sign while an ad can pay for it instead
+            Transform tile = upgradeLabels[u].transform.parent;
+            MakeCard(tile, new Vector2(0f, -140f), new Vector2(271f, 72f),
+                new Color(0f, 0f, 0f, 0.32f));
+            upgradePriceCoins[u] = MakeCurrencyIcon(tile, new Vector2(0.5f, 0.5f),
+                new Vector2(-60f, -140f), 46f, false);
+            upgradePriceTexts[u] = MakeText(tile, "UpgPrice" + u, 46, TextAnchor.MiddleCenter,
+                new Vector2(0.5f, 0.5f), new Vector2(10f, -140f), new Vector2(220f, 70f), true);
+            var chipGo = new GameObject("AdChip");
+            chipGo.transform.SetParent(tile, false);
+            var chip = chipGo.AddComponent<RawImage>();
+            chip.texture = GetAdChipTexture();
+            chip.raycastTarget = false;
+            var chipRt = chip.rectTransform;
+            chipRt.anchorMin = chipRt.anchorMax = chipRt.pivot = new Vector2(0.5f, 0.5f);
+            chipRt.anchoredPosition = new Vector2(100f, -140f);
+            chipRt.sizeDelta = new Vector2(42f, 42f);
+            chipGo.SetActive(false);
+            upgradeAdChips[u] = chipGo;
         }
 
         // the level grid starts a clear gap under the upgrades' panel
@@ -6545,6 +6763,7 @@ public partial class GameManager : MonoBehaviour
             }
         }
         MakeScrollFooter(racePanel, raceWindow, CloseRaces);
+        BuildUpgradeAdPopup();
 
         // race HUD: position and distance remaining
         raceHudText = MakeText(uiRoot, "RaceHud", 76, TextAnchor.UpperCenter,
@@ -6564,12 +6783,11 @@ public partial class GameManager : MonoBehaviour
             new Vector2(0.5f, 0.5f), new Vector2(0f, 550f), new Vector2(800f, 120f));
         qpTitle.text = "QUESTS";
         qpTitle.color = new Color(1f, 0.72f, 0.12f);
-        questMultText = MakeText(questsPanel.transform, "QPMult", 40, TextAnchor.MiddleCenter,
-            new Vector2(0.5f, 0.5f), new Vector2(0f, 430f), new Vector2(900f, 70f));
-        questMultText.color = new Color(0.7f, 0.9f, 1f);
-        questTiresText = MakeText(questsPanel.transform, "QPTires", 36, TextAnchor.MiddleCenter,
-            new Vector2(0.5f, 0.5f), new Vector2(0f, 350f), new Vector2(900f, 60f));
-        questTiresText.color = new Color(1f, 0.34f, 0.30f);
+        // the multiplier, upright and plain; the tire count is the corner
+        // counter's job, so the window does not repeat it
+        questMultText = MakeText(questsPanel.transform, "QPMult", 50, TextAnchor.MiddleCenter,
+            new Vector2(0.5f, 0.5f), new Vector2(0f, 405f), new Vector2(900f, 70f), true);
+        questMultText.color = new Color(0.72f, 0.92f, 1f);
         for (int i = 0; i < 3; i++)
         {
             MakeCard(questsPanel.transform, new Vector2(0f, 190f - i * 220f),
@@ -6581,10 +6799,10 @@ public partial class GameManager : MonoBehaviour
             questRowTexts[i].lineSpacing = 1.15f;
             questRowTexts[i].horizontalOverflow = HorizontalWrapMode.Wrap;
         }
-        var qpHint = MakeText(questsPanel.transform, "QPHint", 32, TextAnchor.MiddleCenter,
-            new Vector2(0.5f, 0.5f), new Vector2(0f, -405f), new Vector2(920f, 70f));
+        var qpHint = MakeText(questsPanel.transform, "QPHint", 40, TextAnchor.MiddleCenter,
+            new Vector2(0.5f, 0.5f), new Vector2(0f, -410f), new Vector2(920f, 90f), true);
         qpHint.text = "COMPLETE ALL 3\n+1 MULTIPLIER   +6 TIRES";
-        qpHint.color = new Color(1f, 1f, 1f, 0.6f);
+        qpHint.color = new Color(1f, 1f, 1f, 0.9f);
         // inside the card (it ends at -645), under the hint
         MakeCloseButton(questsPanel.transform, new Vector2(0f, -530f), CloseQuests);
 
@@ -6616,12 +6834,12 @@ public partial class GameManager : MonoBehaviour
         tbRt.anchoredPosition = new Vector2(0f, 285f);
         tbRt.sizeDelta = new Vector2(290f, 290f);
 
-        var boxBtnLabel = MakeButton(shopScroll, Loc.F("OPEN BOX  {0}", MysteryBoxCost), 34,
-            new Vector2(0f, 90f), new Vector2(700f, 110f), BuyMysteryBox, null, true);
-        MakeCurrencyIcon(boxBtnLabel.transform.parent, new Vector2(0.5f, 0.5f),
-            new Vector2(196f, 0f), 55f, false);
-        boxResultText = MakeText(shopScroll, "BoxResult", 46, TextAnchor.MiddleCenter,
-            new Vector2(0.5f, 0.5f), new Vector2(0f, -5f), new Vector2(900f, 70f));
+        var boxBtnLabel = MakeButton(shopScroll, Loc.F("OPEN BOX  {0}", MysteryBoxCost), 48,
+            new Vector2(0f, 90f), new Vector2(700f, 116f), BuyMysteryBox, null, true);
+        IconAfterText(MakeCurrencyIcon(boxBtnLabel.transform.parent, new Vector2(0.5f, 0.5f),
+            Vector2.zero, 62f, false), boxBtnLabel);
+        boxResultText = MakeText(shopScroll, "BoxResult", 44, TextAnchor.MiddleCenter,
+            new Vector2(0.5f, 0.5f), new Vector2(0f, -5f), new Vector2(900f, 70f), true);
 
         // --- blue token box
         var tokLabel = MakeText(shopScroll, "TokenBoxLabel", 44, TextAnchor.MiddleCenter,
@@ -6638,14 +6856,14 @@ public partial class GameManager : MonoBehaviour
         tb2Rt.anchoredPosition = new Vector2(0f, -265f);
         tb2Rt.sizeDelta = new Vector2(255f, 255f);
 
-        var tokBtn = MakeButton(shopScroll, Loc.F("OPEN  {0}", TokenBoxTireCost), 34,
-            new Vector2(0f, -430f), new Vector2(700f, 110f), BuyTokenBox,
+        var tokBtn = MakeButton(shopScroll, Loc.F("OPEN  {0}", TokenBoxTireCost), 48,
+            new Vector2(0f, -430f), new Vector2(700f, 116f), BuyTokenBox,
             new Color(0.16f, 0.45f, 0.9f), true);
-        MakeCurrencyIcon(tokBtn.transform.parent, new Vector2(0.5f, 0.5f),
-            new Vector2(158f, 0f), 55f, true);
+        IconAfterText(MakeCurrencyIcon(tokBtn.transform.parent, new Vector2(0.5f, 0.5f),
+            Vector2.zero, 62f, true), tokBtn);
         tokenBoxResultText = MakeText(shopScroll, "TokenBoxResult", 44,
             TextAnchor.MiddleCenter, new Vector2(0.5f, 0.5f),
-            new Vector2(0f, -520f), new Vector2(900f, 70f));
+            new Vector2(0f, -520f), new Vector2(900f, 70f), true);
 
         var tiresLabel = MakeText(shopScroll, "TiresLabel", 46, TextAnchor.MiddleCenter,
             new Vector2(0.5f, 0.5f), new Vector2(0f, -610f), new Vector2(700f, 70f));
@@ -6656,7 +6874,8 @@ public partial class GameManager : MonoBehaviour
             int pack = i; // capture for the closure
             float x = i % 2 == 0 ? -235f : 235f;
             float y = -710f - (i / 2) * 140f;
-            Text label = MakeButton(shopScroll, "", 34,
+            // the amount big, the price under it nearly as big
+            Text label = MakeButton(shopScroll, "", 52,
                 new Vector2(x, y), new Vector2(440f, 132f), () => BuyTirePack(pack),
                 null, true);
             // Unity's own font here: it falls back to the phone's fonts, so
@@ -6673,8 +6892,8 @@ public partial class GameManager : MonoBehaviour
             icon.raycastTarget = false;
             var iRt = icon.rectTransform;
             iRt.anchorMin = iRt.anchorMax = iRt.pivot = new Vector2(0.5f, 0.5f);
-            iRt.anchoredPosition = new Vector2(-143f, 18f);
-            iRt.sizeDelta = new Vector2(88f, 88f);
+            iRt.anchoredPosition = new Vector2(-143f, 4f);
+            iRt.sizeDelta = new Vector2(96f, 96f);
             packIcons[i] = icon;
         }
         RefreshPackPrices();
@@ -6690,7 +6909,7 @@ public partial class GameManager : MonoBehaviour
             int cCoins = coinPackCoins[i];
             int cCost = coinPackCost[i];
             Text label = MakeButton(shopScroll,
-                cCoins + "\n\n<size=26>" + cCost + "</size>", 32,
+                FormatCount(cCoins) + "\n<size=36>" + cCost + "</size>", 46,
                 new Vector2(-330f + i * 330f, -1205f), new Vector2(305f, 155f),
                 () => BuyCoinPack(cCoins, cCost), null, true);
             label.rectTransform.anchoredPosition = new Vector2(40f, 0f);
@@ -6709,7 +6928,7 @@ public partial class GameManager : MonoBehaviour
 
             // tyre tucked right up against the price
             MakeCurrencyIcon(label.transform.parent, new Vector2(0.5f, 0.5f),
-                new Vector2(84f, -27f), 34f, true);
+                new Vector2(88f, -21f), 42f, true);
         }
 
         // --- permanent power-up duration upgrades, 7 levels each
@@ -6726,21 +6945,21 @@ public partial class GameManager : MonoBehaviour
             MakeCard(shopScroll, new Vector2(0f, y), new Vector2(940f, 132f),
                 new Color(0.2f, 0.16f, 0.3f, 0.9f));
 
-            itemUpNames[i] = MakeText(shopScroll, "ItemUpName" + i, 34,
+            itemUpNames[i] = MakeText(shopScroll, "ItemUpName" + i, 42,
                 TextAnchor.MiddleLeft, new Vector2(0.5f, 0.5f),
-                new Vector2(-215f, y + 22f), new Vector2(480f, 50f), true);
-            itemUpInfo[i] = MakeText(shopScroll, "ItemUpInfo" + i, 28,
+                new Vector2(-215f, y + 24f), new Vector2(480f, 56f), true);
+            itemUpInfo[i] = MakeText(shopScroll, "ItemUpInfo" + i, 34,
                 TextAnchor.MiddleLeft, new Vector2(0.5f, 0.5f),
-                new Vector2(-215f, y - 24f), new Vector2(480f, 46f), true);
-            itemUpInfo[i].color = new Color(1f, 1f, 1f, 0.75f);
+                new Vector2(-215f, y - 26f), new Vector2(480f, 50f), true);
+            itemUpInfo[i].color = new Color(1f, 1f, 1f, 0.92f);
 
-            itemUpButtons[i] = MakeButton(shopScroll, "", 32,
-                new Vector2(270f, y), new Vector2(330f, 104f),
+            itemUpButtons[i] = MakeButton(shopScroll, "", 46,
+                new Vector2(270f, y), new Vector2(330f, 108f),
                 () => BuyItemUpgrade(item), null, true);
             // coin icon sits to the left of the price
             itemUpCoins[i] = MakeCurrencyIcon(itemUpButtons[i].transform.parent,
-                new Vector2(0.5f, 0.5f), new Vector2(-105f, 0f), 46f, false);
-            itemUpButtons[i].rectTransform.anchoredPosition = new Vector2(28f, 0f);
+                new Vector2(0.5f, 0.5f), new Vector2(-100f, 0f), 54f, false);
+            itemUpButtons[i].rectTransform.anchoredPosition = new Vector2(32f, 0f);
         }
 
         MakeScrollFooter(shopPanel, shopWindow, CloseShop);
@@ -6774,10 +6993,10 @@ public partial class GameManager : MonoBehaviour
         MakeCurrencyIcon(reviveTireLabel.transform.parent, new Vector2(0.5f, 0.5f),
             new Vector2(150f, 0f), 62f, true);
         reviveTireLabel.rectTransform.anchoredPosition = new Vector2(-34f, 0f);
-        reviveHaveText = MakeText(revivePanel.transform, "RHave", 30,
+        reviveHaveText = MakeText(revivePanel.transform, "RHave", 38,
             TextAnchor.MiddleCenter, new Vector2(0.5f, 0.5f),
-            new Vector2(0f, -28f), new Vector2(700f, 40f), true);
-        reviveHaveText.color = new Color(1f, 1f, 1f, 0.65f);
+            new Vector2(0f, -30f), new Vector2(700f, 50f), true);
+        reviveHaveText.color = new Color(1f, 1f, 1f, 0.9f);
         reviveAdLabel = MakeButton(revivePanel.transform, "AD", 38,
             new Vector2(0f, -132f), new Vector2(760f, 120f), ReviveWithAd, null, true);
         MakeButton(revivePanel.transform, "GIVE UP", 40,
@@ -7055,9 +7274,9 @@ public partial class GameManager : MonoBehaviour
         goScore = MakeText(goCard, "GOScore", 130, TextAnchor.MiddleCenter,
             new Vector2(0.5f, 0.5f), new Vector2(0f, 200f), new Vector2(950f, 190f));
 
-        goBestLine = MakeText(goCard, "GOBest", 34, TextAnchor.MiddleCenter,
-            new Vector2(0.5f, 0.5f), new Vector2(0f, 105f), new Vector2(950f, 60f));
-        goBestLine.color = new Color(1f, 1f, 1f, 0.6f);
+        goBestLine = MakeText(goCard, "GOBest", 42, TextAnchor.MiddleCenter,
+            new Vector2(0.5f, 0.5f), new Vector2(0f, 105f), new Vector2(950f, 60f), true);
+        goBestLine.color = new Color(1f, 1f, 1f, 0.85f);
 
         // Two stat rows, label left and value right. The offsets are the
         // CENTRE of each text box, so a left-aligned label that starts at
@@ -7095,7 +7314,7 @@ public partial class GameManager : MonoBehaviour
         goScore.text = "0";
         goBestLine.text = newBest ? "NEW PERSONAL BEST" : Loc.F("BEST  {0}", best);
         goBestLine.color = newBest ? new Color(1f, 0.82f, 0.15f)
-                                   : new Color(1f, 1f, 1f, 0.6f);
+                                   : new Color(1f, 1f, 1f, 0.85f);
         goStatValue[0].text = Loc.F("{0} M", Mathf.RoundToInt(car.DistanceTraveled));
         goStatValue[1].text = "+" + bonus;
         goAnimT = 0f;
@@ -7220,8 +7439,8 @@ public partial class GameManager : MonoBehaviour
     void AddSliderRow(Transform parent, string label, float y, float value,
         UnityEngine.Events.UnityAction<float> onChanged)
     {
-        var text = MakeText(parent, label + "Label", 34, TextAnchor.MiddleCenter,
-            new Vector2(0.5f, 0.5f), new Vector2(0f, y + 62f), new Vector2(800f, 50f));
+        var text = MakeText(parent, label + "Label", 40, TextAnchor.MiddleCenter,
+            new Vector2(0.5f, 0.5f), new Vector2(0f, y + 62f), new Vector2(800f, 54f), true);
         text.text = label;
         MakeSlider(parent, new Vector2(0f, y), value, onChanged);
     }
@@ -7701,6 +7920,31 @@ public partial class GameManager : MonoBehaviour
     }
 
     const string SettingsIconPath = "UI/icon_settings";
+
+    /// <summary>
+    /// Puts a currency icon just after a centred label's text (the label's
+    /// own width, so it fits every language and every amount).
+    /// </summary>
+    static void IconAfterText(RawImage icon, Text label)
+    {
+        var rt = icon.rectTransform;
+        const float Gap = 14f;
+        float w = rt.sizeDelta.x;
+        // the text and its icon are centred on the button together
+        var lRt = label.rectTransform;
+        lRt.anchoredPosition = new Vector2(-(Gap + w) * 0.5f, lRt.anchoredPosition.y);
+        float half = label.preferredWidth * 0.5f;
+        rt.anchoredPosition = new Vector2(lRt.anchoredPosition.x + half + Gap + w * 0.5f, 0f);
+    }
+
+    /// <summary>Puts a currency icon just before a centred label's text.</summary>
+    static void IconBeforeText(RawImage icon, Text label)
+    {
+        var rt = icon.rectTransform;
+        Vector2 at = label.rectTransform.anchoredPosition;
+        float half = label.preferredWidth * 0.5f;
+        rt.anchoredPosition = new Vector2(at.x - half - 16f - rt.sizeDelta.x * 0.5f, at.y);
+    }
 
     /// <summary>
     /// The in-run pause button: two white bars on a dark raised square, lined

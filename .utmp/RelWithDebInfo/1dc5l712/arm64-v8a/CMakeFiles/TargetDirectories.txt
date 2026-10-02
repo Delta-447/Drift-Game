@@ -1,0 +1,8 @@
+C:/Users/delan/Downloads/Drift Game/Drift Game/.utmp/RelWithDebInfo/1dc5l712/arm64-v8a/CMakeFiles/edit_cache.dir
+C:/Users/delan/Downloads/Drift Game/Drift Game/.utmp/RelWithDebInfo/1dc5l712/arm64-v8a/CMakeFiles/rebuild_cache.dir
+C:/Users/delan/Downloads/Drift Game/Drift Game/.utmp/RelWithDebInfo/1dc5l712/arm64-v8a/GameActivity/CMakeFiles/game.dir
+C:/Users/delan/Downloads/Drift Game/Drift Game/.utmp/RelWithDebInfo/1dc5l712/arm64-v8a/GameActivity/CMakeFiles/edit_cache.dir
+C:/Users/delan/Downloads/Drift Game/Drift Game/.utmp/RelWithDebInfo/1dc5l712/arm64-v8a/GameActivity/CMakeFiles/rebuild_cache.dir
+C:/Users/delan/Downloads/Drift Game/Drift Game/.utmp/RelWithDebInfo/1dc5l712/arm64-v8a/FramePacing/CMakeFiles/swappywrapper.dir
+C:/Users/delan/Downloads/Drift Game/Drift Game/.utmp/RelWithDebInfo/1dc5l712/arm64-v8a/FramePacing/CMakeFiles/edit_cache.dir
+C:/Users/delan/Downloads/Drift Game/Drift Game/.utmp/RelWithDebInfo/1dc5l712/arm64-v8a/FramePacing/CMakeFiles/rebuild_cache.dir

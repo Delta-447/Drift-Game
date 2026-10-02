@@ -16,7 +16,7 @@ public class DriveRecorder : MonoBehaviour
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
     static void Boot()
     {
-        var car = Object.FindFirstObjectByType<CarController>();
+        var car = Object.FindAnyObjectByType<CarController>();
         if (car == null) return;
         var go = new GameObject("DriveRecorder");
         go.AddComponent<DriveRecorder>().car = car;

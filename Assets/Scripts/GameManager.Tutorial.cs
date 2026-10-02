@@ -311,14 +311,13 @@ public partial class GameManager
 
     // ------------------------------------------------------------ entry points
 
-    /// <summary>Settings > General > TUTORIAL: back to the menu, and the tutorial starts from PLAY.</summary>
+    /// <summary>Settings > General > TUTORIAL: straight from Settings into the drive.</summary>
     void ReplayTutorial()
     {
         if (state != State.Menu) return;
         settingsPanel.SetActive(false);
-        menuPanel.SetActive(true);
         audioMan.PlayTap();
-        coachWanted = true;
+        StartCoachDrive();
     }
 
     /// <summary>Shows the tutorial layer. A canvas only keeps its own draw order while live, so it is set again.</summary>
@@ -329,6 +328,19 @@ public partial class GameManager
         coachCanvas.sortingOrder = 300;
         coachTopCanvas.overrideSorting = true;
         coachTopCanvas.sortingOrder = 320;
+    }
+
+    /// <summary>
+    /// The tutorial can start by itself: in the lobby, the opening title has
+    /// finished and no popup is up. The menu itself is not needed - on the
+    /// first launch it is kept hidden until the tutorial is over.
+    /// </summary>
+    bool CoachCanStart()
+    {
+        if (state != State.Menu || introRunning) return false;
+        if (loginPanel != null && loginPanel.activeSelf) return false;
+        if (unlockPanel != null && unlockPanel.activeSelf) return false;
+        return true;
     }
 
     /// <summary>The menu is showing with nothing on top of it.</summary>
@@ -456,7 +468,7 @@ public partial class GameManager
         {
             case CoachPhase.None:
                 // the first time (and from Settings) it starts by itself
-                if (coachWanted && CoachMenuFree()) StartCoachDrive();
+                if (coachWanted && CoachCanStart()) StartCoachDrive();
                 break;
             case CoachPhase.MenuStart:
                 // started a run some other way, or left the menu

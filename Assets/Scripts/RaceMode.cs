@@ -71,17 +71,21 @@ public class RaceMode : MonoBehaviour
     public enum Upgrade { Speed = 0, Strength = 1, CoinBonus = 2 }
     public static readonly string[] UpgradeNames = { "ENGINE", "CHASSIS", "COIN BONUS" };
     static readonly int[] UpgradeMaxLevel = { 20, 10, 90 };
-    static readonly int[] UpgradeBaseCost = { 900, 1400, 500 };
+
+    // One price ladder for all three: the first level of anything costs
+    // UpgradeStartCost, and every level after that costs UpgradeCostStep more
+    // than the one before (500, 750, 1,000, 1,250 ...).
+    public const int UpgradeStartCost = 500;
+    public const int UpgradeCostStep = 250;
 
     public static int Level(Upgrade u) { return PlayerPrefs.GetInt("Upg" + (int)u, 0); }
     public static int MaxLevel(Upgrade u) { return UpgradeMaxLevel[(int)u]; }
     public static bool IsMaxed(Upgrade u) { return Level(u) >= MaxLevel(u); }
 
-    /// <summary>Cost climbs steeply so late levels are a real investment.</summary>
+    /// <summary>The same for every upgrade: a fixed start, a fixed step per level.</summary>
     public static int CostOf(Upgrade u)
     {
-        int lv = Level(u);
-        return Mathf.RoundToInt(UpgradeBaseCost[(int)u] * Mathf.Pow(1.18f, lv));
+        return UpgradeStartCost + UpgradeCostStep * Level(u);
     }
 
     public static void Buy(Upgrade u)

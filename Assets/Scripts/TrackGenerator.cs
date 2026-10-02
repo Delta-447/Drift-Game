@@ -163,6 +163,114 @@ public class TrackGenerator : MonoBehaviour
         return false;
     }
 
+    // ---- the overlap look
+    // The crossing checks above keep a generous berth, but where they cannot
+    // find a clear way they let a bend through anyway - and that is how two
+    // stretches of road ended up on top of each other, flickering where they
+    // overlap. This second look is narrower (does road actually land on
+    // road?) but sees much further: past the piece being planned and on for
+    // OverlapLook metres more, so the track turns away in good time instead
+    // of finding out when it is already boxed in. It only steps in when the
+    // usual choice would really overlap, so the corners are otherwise the
+    // same as before.
+    const float OverlapLook = 150f;
+    const float OverlapMargin = 4f;      // edge to edge, plus room for the posts
+    static readonly float[] EscapeRadii = { 55f, 42f, 32f, 24f };
+    static readonly float[] EscapeAngles = { 30f, 60f, 90f, 120f, 150f };
+
+    /// <summary>True if road at this spot would lie on road laid earlier.</summary>
+    bool LandsOnOldRoad(Vector3 p, float atDistance)
+    {
+        float clear = roadWidth + OverlapMargin;
+        float sq = clear * clear;
+        float blind = Mathf.Max(34f, roadWidth * 3f);    // the road just behind
+        int reach = Mathf.CeilToInt(clear / RoadCell);
+        for (int dx = -reach; dx <= reach; dx++)
+        {
+            for (int dz = -reach; dz <= reach; dz++)
+            {
+                long k = CellKeyAt(p + new Vector3(dx * RoadCell, 0f, dz * RoadCell), RoadCell);
+                if (!roadGrid.TryGetValue(k, out List<TrailPoint> list)) continue;
+                for (int i = 0; i < list.Count; i++)
+                {
+                    TrailPoint tp = list[i];
+                    if (atDistance - tp.dist < blind) continue;
+                    if (Mathf.Abs(tp.pos.y - p.y) > 14f) continue;   // a different level
+                    Vector3 d = tp.pos - p;
+                    d.y = 0f;
+                    if (d.sqrMagnitude < sq) return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// How far a planned piece - an arc, then straight on for OverlapLook
+    /// metres - gets before it lands on old road (infinity if it never does).
+    /// </summary>
+    float ClearRunOf(float curvature, float arcLength)
+    {
+        Vector3 p = frontPos;
+        float h = headingDeg;
+        const float Step = 5f;
+        float total = arcLength + OverlapLook;
+        for (float d = Step; d <= total; d += Step)
+        {
+            if (d <= arcLength) h += curvature * Step;
+            p += Quaternion.Euler(0f, h, 0f) * Vector3.forward * Step;
+            if (LandsOnOldRoad(p, frontDistance + d)) return d;
+        }
+        return float.PositiveInfinity;
+    }
+
+    bool PlanIsSafe(float curvature, float arcLength)
+    {
+        return float.IsPositiveInfinity(ClearRunOf(curvature, arcLength));
+    }
+
+    /// <summary>
+    /// The planned piece would run onto old road. Tries bends both ways (the
+    /// way the track has turned least first), wide to tight, a little to a
+    /// lot, and takes the first that stays clear all the way. Boxed in
+    /// completely, it takes whichever stays clear the longest. Sets the
+    /// segment, and returns the way it turns (0 for straight on).
+    /// </summary>
+    int EscapeOldRoad()
+    {
+        float bestRun = -1f, bestCurv = 0f, bestArc = 20f;
+        int bestDir = 0;
+        int first = netTurnDeg > 0f ? -1 : 1;
+        for (int r = 0; r < EscapeRadii.Length; r++)
+        {
+            for (int side = 0; side < 2; side++)
+            {
+                int dir = side == 0 ? first : -first;
+                float curv = dir * Mathf.Rad2Deg / EscapeRadii[r];
+                for (int a = 0; a < EscapeAngles.Length; a++)
+                {
+                    float arc = EscapeAngles[a] / Mathf.Abs(curv);
+                    float run = ClearRunOf(curv, arc);
+                    if (float.IsPositiveInfinity(run))
+                    {
+                        segmentCurvature = curv;
+                        segmentRemaining = arc;
+                        return dir;
+                    }
+                    if (run > bestRun) { bestRun = run; bestCurv = curv; bestArc = arc; bestDir = dir; }
+                }
+            }
+        }
+        float straightRun = ClearRunOf(0f, 20f);
+        if (float.IsPositiveInfinity(straightRun) || straightRun > bestRun)
+        {
+            bestCurv = 0f; bestArc = 20f; bestDir = 0;
+        }
+        segmentCurvature = bestCurv;
+        segmentRemaining = bestArc;
+        return bestDir;
+    }
+
     float netTurnDeg;      // running total of turning, to stop the road looping
     public float behindDistance = 45f;
     [Tooltip("How much road exists behind the car at the start line.")]
@@ -863,6 +971,9 @@ public class TrackGenerator : MonoBehaviour
                 if (!ArcWouldCross(-away, 70f)) segmentCurvature = -away;
                 else if (!ArcWouldCross(away, 70f)) segmentCurvature = away;
             }
+            // whatever it came to, it must not end up on top of old road
+            if (!mountain && !forceStraight && !PlanIsSafe(segmentCurvature, segmentRemaining))
+                EscapeOldRoad();
             return;
         }
 
@@ -894,6 +1005,14 @@ public class TrackGenerator : MonoBehaviour
                     lastWasCorner = true;
                     lastCornerDir = 1;
                 }
+            }
+
+            // and if this would still run onto old road, find a way out now,
+            // while there is still room to turn
+            if (!mountain && !PlanIsSafe(segmentCurvature, segmentRemaining))
+            {
+                int way = EscapeOldRoad();
+                if (way != 0) { lastWasCorner = true; lastCornerDir = way; }
             }
         }
         else
@@ -952,6 +1071,23 @@ public class TrackGenerator : MonoBehaviour
                     float gentle = Mathf.Lerp(52f, 34f, t);
                     segmentCurvature = dir * Mathf.Rad2Deg / gentle;
                     segmentRemaining = 45f / Mathf.Abs(segmentCurvature);
+                }
+            }
+
+            // That last fallback could clip old road outright. If the bend
+            // (or the road straight on after it) would really land on old
+            // road, turn the other way, or find any way out that does not.
+            if (!mountain && !PlanIsSafe(segmentCurvature, segmentRemaining))
+            {
+                if (PlanIsSafe(-segmentCurvature, segmentRemaining))
+                {
+                    segmentCurvature = -segmentCurvature;
+                    dir = -dir;
+                }
+                else
+                {
+                    int way = EscapeOldRoad();
+                    if (way != 0) dir = way;
                 }
             }
 

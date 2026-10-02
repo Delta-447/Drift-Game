@@ -112,7 +112,7 @@ public class TitleIntro : MonoBehaviour
         canvas.sortingOrder = 31000;           // above the game UI, below the logo
         canvasGo.AddComponent<GraphicRaycaster>();
         // the intro can be up before the game has built its own UI
-        if (FindFirstObjectByType<UnityEngine.EventSystems.EventSystem>() == null)
+        if (FindAnyObjectByType<UnityEngine.EventSystems.EventSystem>() == null)
         {
             var es = new GameObject("EventSystem");
             es.AddComponent<UnityEngine.EventSystems.EventSystem>();
@@ -406,7 +406,7 @@ public class TitleIntro : MonoBehaviour
     {
         // the theme plays through the game's own music source, so it keeps
         // looping straight into the lobby without a gap or a second copy
-        audioMan = FindFirstObjectByType<AudioManager>();
+        audioMan = FindAnyObjectByType<AudioManager>();
         if (audioMan != null && audioMan.RestartMusic()) return;
 
         AudioClip clip = Resources.Load<AudioClip>("Audio/intro_music");
@@ -650,7 +650,7 @@ public class TitleIntro : MonoBehaviour
         // hand the fallback source over to the AudioManager if one exists now
         if (music != null && audioMan == null)
         {
-            audioMan = FindFirstObjectByType<AudioManager>();
+            audioMan = FindAnyObjectByType<AudioManager>();
             if (audioMan != null)
             {
                 music.Stop();

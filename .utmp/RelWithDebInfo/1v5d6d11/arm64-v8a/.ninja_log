@@ -1,0 +1,12 @@
+# ninja log v5
+125	702	8126582379423821	FramePacing/CMakeFiles/swappywrapper.dir/UnitySwappyWrapper.cpp.o	855cdc705a13529c
+705	1161	8126582383579162	C:/Users/delan/Downloads/Drift Game/Drift Game/Library/Bee/Android/Prj/IL2CPP/Gradle/unityLibrary/build/intermediates/cxx/RelWithDebInfo/1v5d6d11/obj/arm64-v8a/libswappywrapper.so	cbbb5ff25a15ecae
+74	2444	8126582396753117	GameActivity/CMakeFiles/game.dir/UGAInputKeyEvent.cpp.o	e395d06ff1acb9cc
+58	2479	8126582397118748	GameActivity/CMakeFiles/game.dir/UGAEntry.cpp.o	b7b351d5320eb023
+14	2497	8126582397307520	GameActivity/CMakeFiles/game.dir/UGAConfiguration.cpp.o	17725b7af2f2b8db
+91	2513	8126582397478232	GameActivity/CMakeFiles/game.dir/UGAInputMotionEvent.cpp.o	b55e03e78f6514ea
+28	2557	8126582397877104	GameActivity/CMakeFiles/game.dir/UGADebug.cpp.o	bcdcc4d4aca8580
+107	2710	8126582399439283	GameActivity/CMakeFiles/game.dir/UGASoftKeyboard.cpp.o	17ae69114544fedd
+43	2772	8126582400056280	GameActivity/CMakeFiles/game.dir/UGAInput.cpp.o	fc8fa60d108a2b54
+1	2872	8126582400988965	GameActivity/CMakeFiles/game.dir/UGAApplication.cpp.o	564b0a33b9fa576a
+2873	3090	8126582403253914	C:/Users/delan/Downloads/Drift Game/Drift Game/Library/Bee/Android/Prj/IL2CPP/Gradle/unityLibrary/build/intermediates/cxx/RelWithDebInfo/1v5d6d11/obj/arm64-v8a/libgame.so	9c9fbee030b55dea

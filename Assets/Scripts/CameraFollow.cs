@@ -292,7 +292,7 @@ public class CameraFollow : MonoBehaviour
         {
             if (car == null && target == null)
             {
-                CarController found = FindFirstObjectByType<CarController>();
+                CarController found = FindAnyObjectByType<CarController>();
                 if (found != null) SetTarget(found.transform);
             }
             return;
