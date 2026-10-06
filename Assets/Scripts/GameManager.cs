@@ -258,7 +258,7 @@ public partial class GameManager : MonoBehaviour
     Text scoreText, bestText, speedText, centerText, bonusText, driftText;
     GameObject menuPanel, settingsPanel, gameOverPanel, garagePanel, pausePanel, pauseButton;
     bool settingsFromPause;
-    Text menuBestText, menuCoinsText, coinHudText;
+    Text menuBestText, coinHudText;
     Text shopCarName, shopStats, shopPrice, shopActionLabel, shopCoinsText;
     float volumeSetting, sensSetting;
     float volMusic, volEngine, volDrift, volCoins, volSfx = 1f;
@@ -667,7 +667,7 @@ public partial class GameManager : MonoBehaviour
                 break;
         }
         PlayerPrefs.Save();
-        menuCoinsText.text = Loc.F("COINS  {0}", totalCoins);
+        RefreshWeeklyMenu();
         RefreshLoginButton();
     }
 
@@ -1230,6 +1230,7 @@ public partial class GameManager : MonoBehaviour
     {
         TickBestRun();
         TickGameOver();
+        TickLeaderboard();
     }
 
     bool OwnedCar(int i)
@@ -1331,7 +1332,7 @@ public partial class GameManager : MonoBehaviour
         // the lobby is always daylight - a run that ended at night or in the
         // snow used to leave its sky behind
         ResetBiome();
-        menuCoinsText.text = Loc.F("COINS  {0}", totalCoins);
+        RefreshWeeklyMenu();
 
         // a new day since the game was opened (it was left running
         // overnight): that day's reward is waiting too
@@ -1350,7 +1351,8 @@ public partial class GameManager : MonoBehaviour
         bonusText.gameObject.SetActive(false);
         driftText.gameObject.SetActive(false);
         SetHudVisible(false);
-        menuBestText.text = Loc.F("BEST  {0}", best);
+        menuBestText.text = Loc.F("HIGH SCORE  {0}", best);
+        FitToWidth(menuBestText, 52, 960f);   // a long score stays on screen
         // back to the lobby theme (the intro owns the music until it hands over)
         if (audioMan != null && !introRunning) audioMan.PlayMenuMusic();
     }
@@ -1365,6 +1367,7 @@ public partial class GameManager : MonoBehaviour
         multHudText.gameObject.SetActive(visible);
         pauseButton.SetActive(visible);
         if (raceHudText != null) raceHudText.gameObject.SetActive(visible && mode == Mode.Race);
+        ShowRivalHud(visible);
         if (!visible) HideItemBars();
     }
 
@@ -2787,7 +2790,7 @@ public partial class GameManager : MonoBehaviour
         PlayerPrefs.Save();
         wheelResultText.text = msg;
         wheelResultText.color = col;
-        menuCoinsText.text = Loc.F("COINS  {0}", totalCoins);
+        RefreshWeeklyMenu();
         // the wheel gets the same full-screen celebration as the boxes
         ShowPrizeReveal(msg, s.kind == SpinPrize.Tokens, WheelIconPath(s));
     }
@@ -3538,7 +3541,7 @@ public partial class GameManager : MonoBehaviour
 
         unlockMsg.color = new Color(0.45f, 1f, 0.55f);
         unlockMsg.text = "ALL CARS + RACES UNLOCKED";
-        menuCoinsText.text = Loc.F("COINS  {0}", totalCoins);
+        RefreshWeeklyMenu();
         audioMan.PlayCoin();
         Invoke(nameof(CloseUnlockPrompt), 1.1f);
     }
@@ -3860,7 +3863,7 @@ public partial class GameManager : MonoBehaviour
         shopPanel.SetActive(false);
         if (shopShowcaseRoot != null) shopShowcaseRoot.SetActive(false);
         menuPanel.SetActive(true);
-        menuCoinsText.text = Loc.F("COINS  {0}", totalCoins);
+        RefreshWeeklyMenu();
         PlayerPrefs.Save();
         audioMan.PlayTap();
     }
@@ -4890,7 +4893,7 @@ public partial class GameManager : MonoBehaviour
         ClearGaragePreview();
         FinishCarSwapNow();   // never leave the garage mid-changeover
         menuPanel.SetActive(true);
-        menuCoinsText.text = Loc.F("COINS  {0}", totalCoins);
+        RefreshWeeklyMenu();
         PlayerPrefs.Save();
         audioMan.PlayTap();
     }
@@ -5698,6 +5701,8 @@ public partial class GameManager : MonoBehaviour
             best = finalScore;
             PlayerPrefs.SetInt("HighScore", best);
         }
+        // the week's ranking (endless runs only); it is shown over the results
+        if (mode == Mode.Endless) LbRecordRun(finalScore);
         // performance bonus: skilled runs pay far better than long ones,
         // since score already rewards drifting and near misses
         int bonusCoins = Mathf.RoundToInt(score / Mathf.Max(1f, scorePerBonusCoin)
@@ -6096,6 +6101,7 @@ public partial class GameManager : MonoBehaviour
         speedText.text = SpeedLabel(car.CurrentSpeed);
         coinHudText.text = Loc.F("RUN COINS {0}", coinsThisRun);
         multHudText.text = "X" + ScoreMultiplier;
+        TickRivalHud();
 
         UpdateItemBars();
 
@@ -6191,6 +6197,8 @@ public partial class GameManager : MonoBehaviour
             new Vector2(0.5f, 1f), new Vector2(0f, -246f), new Vector2(700f, 60f));
         speedText = MakeText(uiRoot, "Speed", 40, TextAnchor.UpperRight,
             new Vector2(1f, 1f), new Vector2(-40f, -200f), new Vector2(400f, 60f));
+        // the weekly rival to beat, under BEST (GameManager.Leaderboard.cs)
+        BuildRivalHud(uiRoot);
 
         // always-visible currency counters, one per top corner, each on its
         // own dark pill so it reads over the bright sky and road behind it
@@ -6307,9 +6315,9 @@ public partial class GameManager : MonoBehaviour
         menuBestText = MakeText(menuPanel.transform, "MenuBest", 52, TextAnchor.MiddleCenter,
             new Vector2(0.5f, 0.5f), new Vector2(0f, 250f), new Vector2(700f, 80f));
         menuBestText.color = new Color(1f, 0.8f, 0.3f);
-        menuCoinsText = MakeText(menuPanel.transform, "MenuCoins", 42, TextAnchor.MiddleCenter,
-            new Vector2(0.5f, 0.5f), new Vector2(0f, 175f), new Vector2(700f, 70f));
-        menuCoinsText.color = new Color(1f, 0.82f, 0.1f);
+        // the week's best, under the all-time one - tap it for the ranking
+        // (the coins already have their own counter in the corner)
+        BuildWeeklyMenuButton(menuPanel.transform);
         // PLAY stands alone; everything else sits in a tidy two-column block
         // underneath, so the menu is not one long stack of identical bars.
         playButtonGo = MakeButton(menuPanel.transform, "PLAY", 64,
@@ -6416,6 +6424,8 @@ public partial class GameManager : MonoBehaviour
         // plays the tutorial again, on its own
         tutorialBtnLabel = MakeButton(settingsGeneralTab.transform, "TUTORIAL", 38,
             new Vector2(0f, -220f), new Vector2(640f, 100f), ReplayTutorial);
+        // the name on the weekly ranking
+        BuildUsernameButton(settingsGeneralTab.transform);
 
         // --- credits
         var credLine = MakeText(settingsCreditsTab.transform, "CreditsBody", 28,
@@ -7013,6 +7023,8 @@ public partial class GameManager : MonoBehaviour
 
         BuildGameOverPanel(uiRoot);
         BuildBestPanel(uiRoot);
+        BuildLeaderboardPanel(uiRoot);
+        BuildNamePanel(uiRoot);
         BuildTutorial(uiRoot);
         BuildCoach(uiRoot);
     }
@@ -7320,6 +7332,14 @@ public partial class GameManager : MonoBehaviour
         goAnimT = 0f;
         gameOverPanel.SetActive(true);
         gameOverPanel.transform.SetAsLastSibling();
+        // where the run left the player in the week (and who passed them)
+        LbFillGameOverLine();
+        // a new weekly best: the ranking comes up over the results
+        if (lbShowAfterRun)
+        {
+            lbShowAfterRun = false;
+            OpenLeaderboard(true);
+        }
     }
 
     void TickGameOver()

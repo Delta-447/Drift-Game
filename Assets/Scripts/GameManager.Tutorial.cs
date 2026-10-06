@@ -468,7 +468,13 @@ public partial class GameManager
         {
             case CoachPhase.None:
                 // the first time (and from Settings) it starts by itself
-                if (coachWanted && CoachCanStart()) StartCoachDrive();
+                if (coachWanted && CoachCanStart())
+                {
+                    // first of all, a name for the weekly ranking
+                    // (GameManager.Leaderboard.cs); the drive starts once it is picked
+                    if (NeedsUsername()) { if (!namePanel.activeSelf) OpenNamePanel(true); }
+                    else StartCoachDrive();
+                }
                 break;
             case CoachPhase.MenuStart:
                 // started a run some other way, or left the menu

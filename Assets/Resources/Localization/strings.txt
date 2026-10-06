@@ -242,3 +242,43 @@ NEW CAR!		NUEVO AUTO	CARRO NOVO!	NOUVELLE VOITURE !	NEUES AUTO!	НОВАЯ МА�
 CHASSIS		CHASIS	CHASSI	CHÂSSIS	FAHRWERK	ШАССИ	底盘	シャーシ	섀시	الهيكل	चेसिस
 COIN BONUS		BONO DE MONEDAS	BÔNUS DE MOEDAS	BONUS DE PIÈCES	MÜNZBONUS	БОНУС МОНЕТ	金币加成	コインボーナス	코인 보너스	مكافأة العملات	सिक्का बोनस
 Watch an ad to get this upgrade\nfor free? One free upgrade a day.		¿Ves un anuncio para llevarte esta\nmejora gratis? Una mejora gratis al día.	Assistir a um anúncio para ganhar esta\nmelhoria grátis? Uma melhoria grátis por dia.	Regarder une pub pour obtenir cette\namélioration gratuite ? Une gratuite par jour.	Werbung ansehen und dieses Upgrade\ngratis bekommen? Ein Gratis-Upgrade pro Tag.	Посмотреть рекламу и получить это\nулучшение бесплатно? Одно в день.	看一段广告，免费获得这个升级？\n每天可免费升级一次。	広告を見てこのアップグレードを\n無料でゲットする？1日1回まで。	광고를 보고 이 업그레이드를\n무료로 받을까요? 하루에 한 번이에요.	شاهد إعلانا لتحصل على هذه الترقية\nمجانا؟ ترقية مجانية واحدة كل يوم.	विज्ञापन देखकर यह अपग्रेड मुफ़्त\nपाएँ? दिन में एक मुफ़्त अपग्रेड।
+WEEKLY BEST  {0}		RÉCORD SEMANAL  {0}	RECORDE DA SEMANA  {0}	RECORD DE LA SEMAINE  {0}	WOCHENBESTWERT  {0}	РЕКОРД НЕДЕЛИ  {0}	本周最高  {0}	今週のベスト  {0}	주간 최고  {0}	الأفضل هذا الأسبوع  {0}	इस हफ़्ते का सर्वश्रेष्ठ  {0}
+WEEKLY RANKING		CLASIFICACIÓN SEMANAL	RANKING SEMANAL	CLASSEMENT DE LA SEMAINE	WOCHENRANGLISTE	РЕЙТИНГ НЕДЕЛИ	每周排行榜	週間ランキング	주간 랭킹	الترتيب الأسبوعي	साप्ताहिक रैंकिंग
+NEW WEEKLY BEST		NUEVO RÉCORD SEMANAL	NOVO RECORDE DA SEMANA	NOUVEAU RECORD DE LA SEMAINE	NEUER WOCHENBESTWERT	НОВЫЙ РЕКОРД НЕДЕЛИ	本周新纪录	今週のベスト更新	주간 신기록	رقم أسبوعي جديد	इस हफ़्ते का नया रिकॉर्ड
+ROOKIE		NOVATO	NOVATO	DÉBUTANT	ANFÄNGER	НОВИЧОК	新手	ルーキー	루키	مبتدئ	नौसिखिया
+BRONZE		BRONCE	BRONZE	BRONZE	BRONZE	БРОНЗА	青铜	ブロンズ	브론즈	برونزي	कांस्य
+SILVER		PLATA	PRATA	ARGENT	SILBER	СЕРЕБРО	白银	シルバー	실버	فضي	रजत
+GOLD		ORO	OURO	OR	GOLD	ЗОЛОТО	黄金	ゴールド	골드	ذهبي	स्वर्ण
+DIAMOND		DIAMANTE	DIAMANTE	DIAMANT	DIAMANT	АЛМАЗ	钻石	ダイヤモンド	다이아몬드	ماسي	हीरा
+DRIFT KING		REY DEL DERRAPE	REI DO DRIFT	ROI DU DÉRAPAGE	DRIFT-KÖNIG	КОРОЛЬ ДРИФТА	漂移之王	ドリフトキング	드리프트 킹	ملك الانجراف	ड्रिफ्ट किंग
+FINISH 1ST TO REACH {0}		QUEDA PRIMERO PARA SUBIR A {0}	FIQUE EM PRIMEIRO PARA SUBIR PARA {0}	FINIS PREMIER POUR PASSER EN {0}	PLATZ 1 BRINGT DICH IN DIE LIGA {0}	1-Е МЕСТО — ПЕРЕХОД В ЛИГУ {0}	获得第1名即可晋级{0}	1位で{0}に昇格	1위를 하면 {0} 승급	احصل على المركز الأول لتصل إلى {0}	{0} में जाने के लिए पहले स्थान पर आएँ
+THE TOP LEAGUE		LA LIGA MÁS ALTA	A LIGA MAIS ALTA	LA MEILLEURE LIGUE	DIE HÖCHSTE LIGA	ВЫСШАЯ ЛИГА	最高联赛	最高リーグ	최상위 리그	أعلى دوري	सबसे ऊँची लीग
+RESETS IN {0}D {1}H		SE REINICIA EN {0} D {1} H	REINICIA EM {0} D {1} H	REMISE À ZÉRO DANS {0} J {1} H	NEUSTART IN {0} T {1} STD	СБРОС ЧЕРЕЗ {0} Д {1} Ч	{0}天{1}小时后重置	リセットまで{0}日{1}時間	{0}일 {1}시간 후 초기화	إعادة الضبط بعد {0} يوم و{1} ساعة	{0} दिन {1} घंटे में रीसेट
+RESETS IN {0}H {1}M		SE REINICIA EN {0} H {1} MIN	REINICIA EM {0} H {1} MIN	REMISE À ZÉRO DANS {0} H {1} MIN	NEUSTART IN {0} STD {1} MIN	СБРОС ЧЕРЕЗ {0} Ч {1} МИН	{0}小时{1}分钟后重置	リセットまで{0}時間{1}分	{0}시간 {1}분 후 초기화	إعادة الضبط بعد {0} ساعة و{1} دقيقة	{0} घंटे {1} मिनट में रीसेट
+YOU		TÚ	VOCÊ	TOI	DU	ТЫ	你	あなた	나	أنت	आप
+TIRES OR SPINS		NEUMÁTICOS O GIROS	PNEUS OU GIROS	PNEUS OU TOURS	REIFEN ODER DREHUNGEN	ШИНЫ ИЛИ ВРАЩЕНИЯ	轮胎或转盘次数	タイヤかスピン	타이어 또는 회전	إطارات أو لفات	टायर या स्पिन
+MYSTERY OR TOKEN BOX		CAJA MISTERIOSA O DE FICHAS	CAIXA MISTERIOSA OU DE FICHAS	BOÎTE MYSTÈRE OU À JETONS	MYSTERY- ODER TOKEN-BOX	ЯЩИК-СЮРПРИЗ ИЛИ ЯЩИК ЖЕТОНОВ	神秘宝箱或代币宝箱	ミステリーかトークンボックス	미스터리 또는 토큰 박스	صندوق غامض أو صندوق رموز	मिस्ट्री या टोकन बॉक्स
+CLAIM PRIZE		RECLAMAR PREMIO	RESGATAR PRÊMIO	RÉCUPÉRER LE PRIX	PREIS ABHOLEN	ЗАБРАТЬ ПРИЗ	领取奖品	賞品を受け取る	상품 받기	استلم الجائزة	इनाम लें
+CONTINUE		CONTINUAR	CONTINUAR	CONTINUER	WEITER	ДАЛЕЕ	继续	続ける	계속	متابعة	जारी रखें
+PROMOTED TO {0}!		ASCENDISTE A {0}!	VOCÊ SUBIU PARA {0}!	PROMU EN {0} !	AUFSTIEG IN {0}!	НОВАЯ ЛИГА — {0}!	晋级{0}！	{0}に昇格！	{0} 승급!	ترقية إلى {0}!	{0} में प्रमोशन!
++{0} SPINS		+{0} GIROS	+{0} GIROS	+{0} TOURS	+{0} DREHUNGEN	+{0} ВРАЩЕНИЯ	+{0} 次	+{0}回	+{0}회	+{0} لفات	+{0} स्पिन
+SCORE {0} TO LOCK IN 1ST		LOGRA {0} PARA ASEGURAR EL PRIMER PUESTO	FAÇA {0} PARA GARANTIR O PRIMEIRO LUGAR	FAIS {0} POUR VERROUILLER LA PREMIÈRE PLACE	ERREICHE {0}, UM PLATZ 1 ZU SICHERN	НАБЕРИ {0}, ЧТОБЫ ЗАКРЕПИТЬ 1-Е МЕСТО	达到{0}即可锁定第1名	{0}で1位確定	{0}점이면 1위 확정	سجّل {0} لتضمن المركز الأول	पहला स्थान पक्का करने के लिए {0} बनाएँ
+HOLD YOUR PLACE UNTIL THE RESET TO WIN		MANTÉN TU PUESTO HASTA EL REINICIO PARA GANAR	SEGURE SUA POSIÇÃO ATÉ O REINÍCIO PARA GANHAR	GARDE TA PLACE JUSQU'À LA REMISE À ZÉRO POUR GAGNER	HALTE DEINEN PLATZ BIS ZUM NEUSTART, UM ZU GEWINNEN	УДЕРЖИ МЕСТО ДО СБРОСА, ЧТОБЫ ПОБЕДИТЬ	保持名次直到重置即可获胜	リセットまで順位を守れば勝利	초기화까지 순위를 지키면 승리	حافظ على مركزك حتى إعادة الضبط لتفوز	जीतने के लिए रीसेट तक अपनी जगह बनाए रखें
+NOBODY CAN CATCH YOU THIS WEEK		NADIE PUEDE ALCANZARTE ESTA SEMANA	NINGUÉM TE ALCANÇA ESTA SEMANA	PERSONNE NE PEUT TE RATTRAPER CETTE SEMAINE	DICH HOLT DIESE WOCHE KEINER EIN	НА ЭТОЙ НЕДЕЛЕ ТЕБЯ НЕ ДОГНАТЬ	本周无人能追上你	今週はもう誰も追いつけない	이번 주엔 아무도 못 따라와요	لا أحد يستطيع اللحاق بك هذا الأسبوع	इस हफ़्ते कोई आपको पकड़ नहीं सकता
+1ST PLACE LOCKED IN!		PRIMER PUESTO ASEGURADO!	PRIMEIRO LUGAR GARANTIDO!	PREMIÈRE PLACE ASSURÉE !	PLATZ 1 GESICHERT!	1-Е МЕСТО ЗАКРЕПЛЕНО!	第1名已锁定！	1位確定！	1위 확정!	المركز الأول مضمون!	पहला स्थान पक्का!
+{0} PASSED YOU		{0} TE ADELANTÓ	{0} TE ULTRAPASSOU	{0} T'A DÉPASSÉ	{0} HAT DICH ÜBERHOLT	{0} ОБОГНАЛ ТЕБЯ	{0}超过了你	{0}に抜かれた	{0}에게 추월당했어요	{0} تجاوزك	{0} ने आपको पीछे छोड़ दिया
+{0} PASSED YOU  -  NOW #{1}		{0} TE ADELANTÓ  -  AHORA #{1}	{0} TE ULTRAPASSOU  -  AGORA #{1}	{0} T'A DÉPASSÉ  -  MAINTENANT #{1}	{0} HAT DICH ÜBERHOLT  -  JETZT #{1}	{0} ОБОГНАЛ ТЕБЯ  -  ТЕПЕРЬ #{1}	{0}超过了你  -  现在第{1}名	{0}に抜かれた  -  現在{1}位	{0}에게 추월당함  -  현재 {1}위	{0} تجاوزك  -  الآن #{1}	{0} ने आपको पीछे छोड़ा  -  अब #{1}
+WEEKLY RANK  #{0}		PUESTO SEMANAL  #{0}	POSIÇÃO NA SEMANA  #{0}	RANG DE LA SEMAINE  #{0}	WOCHENPLATZ  #{0}	МЕСТО НЕДЕЛИ  #{0}	本周排名  第{0}名	今週の順位  {0}位	주간 순위  {0}위	الترتيب الأسبوعي  #{0}	साप्ताहिक रैंक  #{0}
+NEXT RIVAL		PRÓXIMO RIVAL	PRÓXIMO RIVAL	PROCHAIN RIVAL	NÄCHSTER RIVALE	СЛЕДУЮЩИЙ СОПЕРНИК	下一个对手	次のライバル	다음 라이벌	المنافس التالي	अगला प्रतिद्वंद्वी
+YOU'RE IN 1ST		VAS PRIMERO	VOCÊ ESTÁ EM PRIMEIRO	TU ES PREMIER	DU BIST ERSTER	ТЫ НА 1-М МЕСТЕ	你是第1名	1位です	1위입니다	أنت في المركز الأول	आप पहले स्थान पर हैं
+LAST WEEK YOU FINISHED #{0}		LA SEMANA PASADA QUEDASTE #{0}	SEMANA PASSADA VOCÊ FICOU EM #{0}	LA SEMAINE DERNIÈRE TU AS FINI #{0}	LETZTE WOCHE WARST DU #{0}	НА ПРОШЛОЙ НЕДЕЛЕ ТЫ БЫЛ #{0}	上周你获得第{0}名	先週は{0}位	지난주 {0}위	الأسبوع الماضي أنهيت #{0}	पिछले हफ़्ते आप #{0} पर रहे
+PICK A USERNAME		ELIGE UN NOMBRE DE USUARIO	ESCOLHA UM NOME DE USUÁRIO	CHOISIS UN PSEUDO	WÄHLE EINEN NAMEN	ВЫБЕРИ НИК	选择用户名	ユーザー名を決めよう	닉네임을 정하세요	اختر اسم مستخدم	यूज़रनेम चुनें
+This is how you show up\nin the weekly ranking.		Así aparecerás en la\nclasificación semanal.	É assim que você aparece\nno ranking semanal.	C'est ainsi que tu apparais\ndans le classement de la semaine.	So erscheinst du\nin der Wochenrangliste.	Под этим именем ты будешь\nв рейтинге недели.	这是你在每周排行榜上\n显示的名字。	週間ランキングに\n表示される名前です。	주간 랭킹에\n표시되는 이름이에요.	هكذا ستظهر\nفي الترتيب الأسبوعي.	साप्ताहिक रैंकिंग में\nआप इसी नाम से दिखेंगे।
+3 TO 15 LETTERS, NUMBERS OR _		DE 3 A 15 LETRAS, NÚMEROS O _	DE 3 A 15 LETRAS, NÚMEROS OU _	3 À 15 LETTRES, CHIFFRES OU _	3 BIS 15 BUCHSTABEN, ZIFFERN ODER _	3-15 ЛАТИНСКИХ БУКВ, ЦИФР ИЛИ _	3到15个英文字母、数字或_	英数字または_で3〜15文字	영문, 숫자, _ 3~15자	من 3 إلى 15 حرفًا لاتينيًا أو رقمًا أو _	3 से 15 अंग्रेज़ी अक्षर, अंक या _
+RANDOM		AL AZAR	ALEATÓRIO	AU HASARD	ZUFÄLLIG	СЛУЧАЙНО	随机	ランダム	무작위	عشوائي	रैंडम
+USERNAME  {0}		USUARIO  {0}	USUÁRIO  {0}	PSEUDO  {0}	NAME  {0}	НИК  {0}	用户名  {0}	ユーザー名  {0}	닉네임  {0}	اسم المستخدم  {0}	यूज़रनेम  {0}
+OVERTAKEN!		TE ADELANTARON!	ULTRAPASSADO!	DÉPASSÉ !	ÜBERHOLT!	ТЕБЯ ОБОГНАЛИ!	被超越了！	抜かれた！	추월당했어요!	تم تجاوزك!	आपसे आगे निकल गए!
+HIGH SCORE  {0}		RÉCORD  {0}	RECORDE  {0}	MEILLEUR SCORE  {0}	HIGHSCORE  {0}	РЕКОРД  {0}	最高分  {0}	ハイスコア  {0}	최고 점수  {0}	أعلى نتيجة  {0}	हाई स्कोर  {0}
+WEEKLY HIGH SCORE  {0}		RÉCORD SEMANAL  {0}	RECORDE DA SEMANA  {0}	MEILLEUR SCORE DE LA SEMAINE  {0}	WOCHEN-HIGHSCORE  {0}	РЕКОРД НЕДЕЛИ  {0}	本周最高分  {0}	今週のハイスコア  {0}	주간 최고 점수  {0}	أعلى نتيجة هذا الأسبوع  {0}	इस हफ़्ते का हाई स्कोर  {0}
+NEW WEEKLY HIGH SCORE		NUEVO RÉCORD SEMANAL	NOVO RECORDE DA SEMANA	NOUVEAU MEILLEUR SCORE DE LA SEMAINE	NEUER WOCHEN-HIGHSCORE	НОВЫЙ РЕКОРД НЕДЕЛИ	本周新最高分	今週のハイスコア更新	주간 최고 점수 경신	أعلى نتيجة أسبوعية جديدة	इस हफ़्ते का नया हाई स्कोर
+{0} (YOU)		{0} (TÚ)	{0} (VOCÊ)	{0} (TOI)	{0} (DU)	{0} (ТЫ)	{0}（你）	{0}（あなた）	{0} (나)	{0} (أنت)	{0} (आप)
