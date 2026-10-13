@@ -37,10 +37,14 @@ public class RaceMode : MonoBehaviour
         return 900f + StageOf(level) * 260f + BiomeOf(level) * 350f;
     }
 
-    /// <summary>Coin reward for finishing first.</summary>
+    /// <summary>
+    /// Coin reward for finishing first. Every race needs two more engine
+    /// levels than the one before (see TopRivalSpeed), so a win pays about
+    /// one of the two upgrades the next race asks for.
+    /// </summary>
     public static int Reward(int level)
     {
-        return 400 + level * 220;
+        return 500 + level * 450;
     }
 
     public static bool IsUnlocked(int level)
@@ -70,7 +74,9 @@ public class RaceMode : MonoBehaviour
 
     public enum Upgrade { Speed = 0, Strength = 1, CoinBonus = 2 }
     public static readonly string[] UpgradeNames = { "ENGINE", "CHASSIS", "COIN BONUS" };
-    static readonly int[] UpgradeMaxLevel = { 20, 10, 90 };
+    // the engine has 40 smaller steps (it had 20 bigger ones): two of them
+    // are what each race asks for over the last
+    static readonly int[] UpgradeMaxLevel = { 40, 10, 90 };
 
     // One price ladder for all three: the first level of anything costs
     // UpgradeStartCost, and every level after that costs UpgradeCostStep more
@@ -78,7 +84,51 @@ public class RaceMode : MonoBehaviour
     public const int UpgradeStartCost = 500;
     public const int UpgradeCostStep = 250;
 
-    public static int Level(Upgrade u) { return PlayerPrefs.GetInt("Upg" + (int)u, 0); }
+    public static int Level(Upgrade u)
+    {
+        MigrateEngineSteps();
+        return PlayerPrefs.GetInt("Upg" + (int)u, 0);
+    }
+
+    /// <summary>m/s each engine level adds.</summary>
+    public const float EngineStep = 0.3f;
+    /// <summary>Engine levels each race asks for over the one before it.</summary>
+    public const int EngineLevelsPerRace = 2;
+    const float OldEngineStep = 0.55f;
+
+    /// <summary>
+    /// Saves from before the engine went to 40 smaller steps: the level is
+    /// converted so the car keeps the speed it had.
+    /// </summary>
+    static void MigrateEngineSteps()
+    {
+        if (PlayerPrefs.GetInt("UpgEngineSteps", 1) == 2) return;
+        int old = PlayerPrefs.GetInt("Upg0", 0);
+        if (old > 0)
+            PlayerPrefs.SetInt("Upg0", Mathf.Min(UpgradeMaxLevel[0],
+                Mathf.RoundToInt(old * OldEngineStep / EngineStep)));
+        PlayerPrefs.SetInt("UpgEngineSteps", 2);
+        PlayerPrefs.Save();
+    }
+
+    /// <summary>
+    /// The engine level a race is built around. With it the car is just
+    /// quick enough to beat the field's fastest car (about 2.5% clear of it,
+    /// past the field's little bit of catch-up); a level short and only
+    /// perfect boost pads will do; two short and it cannot be won.
+    /// Race 1 is a stock car's.
+    /// </summary>
+    public static int EngineNeeded(int level) { return level * EngineLevelsPerRace; }
+
+    /// <summary>The fastest rival's pace, in m/s, for a car whose stock race speed is given.</summary>
+    public static float TopRivalSpeed(int level, float stockSpeed)
+    {
+        if (level <= 0) return stockSpeed * 0.975f;
+        return stockSpeed + EngineStep * (EngineNeeded(level) - EngineLevelsPerRace);
+    }
+
+    /// <summary>0 = the first race, 1 = the last: for the difficulty bar.</summary>
+    public static float Difficulty(int level) { return (level + 1) / (float)TotalLevels; }
     public static int MaxLevel(Upgrade u) { return UpgradeMaxLevel[(int)u]; }
     public static bool IsMaxed(Upgrade u) { return Level(u) >= MaxLevel(u); }
 
@@ -95,7 +145,7 @@ public class RaceMode : MonoBehaviour
     }
 
     /// <summary>Extra top speed in m/s from the engine upgrade.</summary>
-    public static float SpeedBonus() { return Level(Upgrade.Speed) * 0.55f; }
+    public static float SpeedBonus() { return Level(Upgrade.Speed) * EngineStep; }
 
     /// <summary>0 = stock chassis, 1 = fully reinforced.</summary>
     public static float Strength() { return Level(Upgrade.Strength) / (float)MaxLevel(Upgrade.Strength); }
@@ -183,7 +233,10 @@ public class RaceMode : MonoBehaviour
         // not without it. Level 1 starts level with a stock car, which means
         // out-driving them on the pads and the racing line rather than
         // out-running them.
-        float levelPace = 0.985f + level * 0.0218f;   // 0.985 -> 1.40
+        // (Replaced: the field is now built around the engine level each race
+        // asks for - see TopRivalSpeed. The car leading the field sets the
+        // pace you need; the rest run a little behind it.)
+        float topPace = TopRivalSpeed(level, stockMaxSpeed) / stockMaxSpeed;
 
         for (int i = 0; i < Opponents; i++)
         {
@@ -206,7 +259,7 @@ public class RaceMode : MonoBehaviour
             // actual speed is matched to the player every frame in Tick()
             // a tight spread, so the field is a wall to get through rather
             // than one quick car and four stragglers
-            r.paceFactor = levelPace * Random.Range(0.985f, 1.035f);
+            r.paceFactor = i == 0 ? topPace : topPace * Random.Range(0.965f, 0.995f);
             r.baseSpeed = stockMaxSpeed * r.paceFactor;
             // everyone leaves the line at race pace - the player does too, so
             // nobody appears to rocket away from the field

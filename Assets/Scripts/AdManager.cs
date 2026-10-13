@@ -40,6 +40,58 @@ public class AdManager : MonoBehaviour
 
     static AdManager instance;
 
+    /// <summary>
+    /// The hidden ad check (tap the version number on the main menu five
+    /// times): what LevelPlay is doing, and its test suite. SET THIS TO FALSE
+    /// BEFORE RELEASE.
+    /// </summary>
+    public static readonly bool Diagnostics = true;   // readonly, not const: no "unreachable code" warning
+
+    // what happened, for the ad check screen
+    static string initState = "NOT STARTED";
+    static string loadState = "-";
+    static string showState = "-";
+    static int loadFails;
+
+    static string Stamp() { return System.DateTime.Now.ToString("HH.mm.ss"); }
+
+    /// <summary>Everything worth knowing about why an ad does or does not show.</summary>
+    public static string StatusReport()
+    {
+        var sb = new System.Text.StringBuilder();
+#if LEVELPLAY_DEPENDENCIES_INSTALLED
+        sb.Append("SDK  LevelPlay in the build\n");
+#else
+        sb.Append("SDK  NOT IN THIS BUILD (ads are skipped)\n");
+#endif
+        sb.Append("PLATFORM  ").Append(Application.platform).Append('\n');
+        sb.Append("APP KEY  ").Append(AppKey).Append('\n');
+        sb.Append("AD UNIT  ").Append(RewardedUnitId).Append('\n');
+        sb.Append("INTERNET  ").Append(Application.internetReachability).Append("\n\n");
+        sb.Append("INIT  ").Append(initState).Append("\n\n");
+        sb.Append("LOAD  ").Append(loadState).Append('\n');
+        sb.Append("LOAD FAILS SO FAR  ").Append(loadFails).Append("\n\n");
+        sb.Append("LAST SHOW  ").Append(showState).Append('\n');
+        sb.Append("READY NOW  ").Append(RewardedReady ? "YES" : "NO");
+        return sb.ToString();
+    }
+
+    /// <summary>LevelPlay's own test screen: each network, live or test ads.</summary>
+    public static void OpenTestSuite()
+    {
+#if LEVELPLAY_DEPENDENCIES_INSTALLED
+        Unity.Services.LevelPlay.LevelPlay.LaunchTestSuite();
+#endif
+    }
+
+    /// <summary>Asks for an ad again right now (the check screen's RELOAD).</summary>
+    public static void ReloadNow()
+    {
+#if LEVELPLAY_DEPENDENCIES_INSTALLED
+        if (instance != null) instance.Reload();
+#endif
+    }
+
     /// <summary>True when an ad is loaded and ready to show right now.</summary>
     public static bool RewardedReady
     {
@@ -114,6 +166,9 @@ public class AdManager : MonoBehaviour
 
     void Begin()
     {
+        // the test suite has to be switched on before init
+        if (Diagnostics) Unity.Services.LevelPlay.LevelPlay.SetMetaData("is_test_suite", "enable");
+        initState = "STARTING " + Stamp();
         Unity.Services.LevelPlay.LevelPlay.OnInitSuccess += OnInitSuccess;
         Unity.Services.LevelPlay.LevelPlay.OnInitFailed += OnInitFailed;
         Unity.Services.LevelPlay.LevelPlay.Init(AppKey);
@@ -121,11 +176,22 @@ public class AdManager : MonoBehaviour
 
     void OnInitSuccess(Unity.Services.LevelPlay.LevelPlayConfiguration config)
     {
+        initState = "OK " + Stamp();
         // the ad object must be created AFTER init reports success
         rewarded = new Unity.Services.LevelPlay.LevelPlayRewardedAd(RewardedUnitId);
 
-        rewarded.OnAdLoaded += _ => rewardedLoaded = true;
-        rewarded.OnAdLoadFailed += _ => { rewardedLoaded = false; Invoke(nameof(Reload), 20f); };
+        rewarded.OnAdLoaded += info =>
+        {
+            rewardedLoaded = true;
+            loadState = "LOADED " + Stamp() + "  FROM " + info.AdNetwork;
+        };
+        rewarded.OnAdLoadFailed += err =>
+        {
+            rewardedLoaded = false;
+            loadFails++;
+            loadState = "FAILED " + Stamp() + "  CODE " + err.ErrorCode + "\n" + err.ErrorMessage;
+            Invoke(nameof(Reload), 20f);
+        };
         rewarded.OnAdDisplayed += _ => rewardedLoaded = false;
 
         // the only place a reward is ever recorded. It can arrive before OR
@@ -137,7 +203,12 @@ public class AdManager : MonoBehaviour
         };
 
         rewarded.OnAdClosed += _ => AdClosed();
-        rewarded.OnAdDisplayFailed += (_, __) => AdClosed();
+        rewarded.OnAdDisplayFailed += (_, err) =>
+        {
+            showState = "DISPLAY FAILED " + Stamp() + "  CODE " + err.ErrorCode + "\n" + err.ErrorMessage;
+            AdClosed();
+        };
+        rewarded.OnAdDisplayed += _ => showState = "SHOWN " + Stamp();
 
         Reload();
     }
@@ -145,17 +216,21 @@ public class AdManager : MonoBehaviour
     void OnInitFailed(Unity.Services.LevelPlay.LevelPlayInitError error)
     {
         Debug.LogWarning("[Ads] init failed: " + error);
+        initState = "FAILED " + Stamp() + "  CODE " + error.ErrorCode + "\n" + error.ErrorMessage;
     }
 
     void Reload()
     {
-        if (rewarded != null) rewarded.LoadAd();
+        if (rewarded == null) return;
+        loadState = "LOADING " + Stamp();
+        rewarded.LoadAd();
     }
 
     void Present(string placement, Action onReward, Action onUnavailable)
     {
         if (rewarded == null || !rewardedLoaded)
         {
+            showState = "NOTHING LOADED " + Stamp();
             if (onUnavailable != null) onUnavailable();
             Reload();
             return;

@@ -282,3 +282,22 @@ HIGH SCORE  {0}		RÉCORD  {0}	RECORDE  {0}	MEILLEUR SCORE  {0}	HIGHSCORE  {0}	Р
 WEEKLY HIGH SCORE  {0}		RÉCORD SEMANAL  {0}	RECORDE DA SEMANA  {0}	MEILLEUR SCORE DE LA SEMAINE  {0}	WOCHEN-HIGHSCORE  {0}	РЕКОРД НЕДЕЛИ  {0}	本周最高分  {0}	今週のハイスコア  {0}	주간 최고 점수  {0}	أعلى نتيجة هذا الأسبوع  {0}	इस हफ़्ते का हाई स्कोर  {0}
 NEW WEEKLY HIGH SCORE		NUEVO RÉCORD SEMANAL	NOVO RECORDE DA SEMANA	NOUVEAU MEILLEUR SCORE DE LA SEMAINE	NEUER WOCHEN-HIGHSCORE	НОВЫЙ РЕКОРД НЕДЕЛИ	本周新最高分	今週のハイスコア更新	주간 최고 점수 경신	أعلى نتيجة أسبوعية جديدة	इस हफ़्ते का नया हाई स्कोर
 {0} (YOU)		{0} (TÚ)	{0} (VOCÊ)	{0} (TOI)	{0} (DU)	{0} (ТЫ)	{0}（你）	{0}（あなた）	{0} (나)	{0} (أنت)	{0} (आप)
+COUNTRY GP		GP CAMPESTRE	GP DO CAMPO	GP DE LA CAMPAGNE	LAND-GP	ЗАГОРОДНЫЙ GP	乡村大奖赛	カントリーGP	컨트리 GP	جائزة الريف الكبرى	कंट्री GP
+SUNSET GP		GP DEL ATARDECER	GP DO PÔR DO SOL	GP DU COUCHANT	SONNENUNTERGANG-GP	ЗАКАТНЫЙ GP	日落大奖赛	サンセットGP	선셋 GP	جائزة الغروب الكبرى	सनसेट GP
+STREET GP		GP CALLEJERO	GP DE RUA	GP URBAIN	STRASSEN-GP	УЛИЧНЫЙ GP	街道大奖赛	ストリートGP	스트리트 GP	جائزة الشوارع الكبرى	स्ट्रीट GP
+ALPINE GP		GP ALPINO	GP ALPINO	GP ALPIN	ALPEN-GP	АЛЬПИЙСКИЙ GP	高山大奖赛	アルパインGP	알파인 GP	جائزة جبال الألب الكبرى	अल्पाइन GP
+GP {0} OF {1}		GP {0} DE {1}	GP {0} DE {1}	GP {0} SUR {1}	GP {0} VON {1}	GP {0} ИЗ {1}	第{0}站 / 共{1}站	GP {0} / {1}	GP {0} / {1}	الجائزة {0} من {1}	GP {0} / {1}
+WIN RACE 5 OF {0} TO UNLOCK		GANA LA CARRERA 5 ({0}) PARA DESBLOQUEAR	VENÇA A CORRIDA 5 ({0}) PARA DESBLOQUEAR	GAGNE LA COURSE 5 ({0}) POUR DÉBLOQUER	GEWINNE RENNEN 5 ({0}) ZUM FREISCHALTEN	ВЫИГРАЙ ГОНКУ 5 ({0}), ЧТОБЫ ОТКРЫТЬ	赢得{0}第5场比赛即可解锁	{0}のレース5に勝つと解放	{0} 5번째 레이스 우승 시 잠금 해제	اربح السباق 5 في {0} لفتحه	अनलॉक करने के लिए {0} की रेस 5 जीतें
+DIFFICULTY		DIFICULTAD	DIFICULDADE	DIFFICULTÉ	SCHWIERIGKEIT	СЛОЖНОСТЬ	难度	難易度	난이도	الصعوبة	कठिनाई
+RACE {0} NEEDS ENGINE LV {1}		LA CARRERA {0} PIDE MOTOR NV {1}	A CORRIDA {0} PEDE MOTOR NV {1}	LA COURSE {0} DEMANDE MOTEUR NIV {1}	RENNEN {0} BRAUCHT MOTOR STUFE {1}	ДЛЯ ГОНКИ {0} НУЖЕН ДВИГАТЕЛЬ УР. {1}	第{0}场比赛需要引擎{1}级	レース{0}はエンジンLv{1}が必要	레이스 {0}: 엔진 Lv {1} 필요	السباق {0} يحتاج المحرك مستوى {1}	रेस {0} के लिए इंजन लेवल {1} चाहिए
+EASY		FÁCIL	FÁCIL	FACILE	LEICHT	ЛЕГКО	简单	かんたん	쉬움	سهل	आसान
+MEDIUM		MEDIO	MÉDIO	MOYEN	MITTEL	СРЕДНЕ	中等	ふつう	보통	متوسط	मध्यम
+HARD		DIFÍCIL	DIFÍCIL	DIFFICILE	SCHWER	СЛОЖНО	困难	むずかしい	어려움	صعب	कठिन
+EXTREME		EXTREMO	EXTREMO	EXTRÊME	EXTREM	ЭКСТРИМ	极限	エクストリーム	익스트림	متطرف	चरम
+PLACE		POSICIÓN	POSIÇÃO	PLACE	PLATZ	МЕСТО	名次	順位	순위	المركز	स्थान
+{0}M TO GO		FALTAN {0}M	FALTAM {0}M	ENCORE {0}M	NOCH {0}M	ОСТАЛОСЬ {0} М	还剩{0}米	残り{0}M	{0}M 남음	باقي {0} م	{0} मी. बाकी
+{0} UNLOCKED!		{0} DESBLOQUEADO	{0} LIBERADO!	{0} DÉBLOQUÉ !	{0} FREIGESCHALTET!	{0} ОТКРЫТ!	{0}已解锁！	{0} 解放！	{0} 잠금 해제!	تم فتح {0}!	{0} अनलॉक!
+CONTACT		CONTACTO	CONTATO	CONTACT	KONTAKT	КОНТАКТЫ	联系我们	お問い合わせ	문의	اتصل بنا	संपर्क
+GET IN TOUCH		CONTÁCTANOS	FALE CONOSCO	NOUS CONTACTER	SCHREIB UNS	СВЯЖИСЬ С НАМИ	联系我们	ご連絡はこちら	연락하기	تواصل معنا	हमसे संपर्क करें
+WEBSITE		SITIO WEB	SITE	SITE WEB	WEBSITE	САЙТ	网站	ウェブサイト	웹사이트	الموقع	वेबसाइट
+EMAIL		CORREO	E-MAIL	E-MAIL	E-MAIL	ПОЧТА	邮箱	メール	이메일	البريد	ईमेल

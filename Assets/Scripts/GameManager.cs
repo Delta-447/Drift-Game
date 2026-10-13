@@ -133,7 +133,15 @@ public partial class GameManager : MonoBehaviour
     /// </summary>
     // 14, up from 10: recorded driving showed the slide trailing the thumb by
     // about a quarter of a second. Still eases in and out of every change.
-    const float AngleSeek = 14f;
+    // 16 now: a touch more responsive again, asked for after playtesting.
+    const float AngleSeek = 16f;
+
+    /// <summary>
+    /// How much quicker the sideways speed is allowed to build than the
+    /// scene's CarController says (the sensitivity setting scales it from
+    /// there). Goes with the AngleSeek bump: a tad more responsive.
+    /// </summary>
+    const float SteerAccelBoost = 1.12f;
 
     /// <summary>
     /// How gentle the steering is around the middle of the thumb's travel
@@ -939,7 +947,7 @@ public partial class GameManager : MonoBehaviour
                   " gain " + runSpeedGain + " | points/m " + pointsPerMeter +
                   " | drift thr " + car.driftThreshold +
                   " angle " + car.driftAngle);
-        baseSteerAccel = car.steerAcceleration;
+        baseSteerAccel = car.steerAcceleration * SteerAccelBoost;
         ApplySettings();
         EquipSelected();
         AssignCurrencyIcons();
@@ -1231,6 +1239,9 @@ public partial class GameManager : MonoBehaviour
         TickBestRun();
         TickGameOver();
         TickLeaderboard();
+        TickRaceTags();
+        TickFinishReveal();
+        TickRaceSelect();
     }
 
     bool OwnedCar(int i)
@@ -1363,8 +1374,8 @@ public partial class GameManager : MonoBehaviour
         scoreText.gameObject.SetActive(visible && endless);
         bestText.gameObject.SetActive(visible && endless);
         speedText.gameObject.SetActive(visible);
-        coinHudText.gameObject.SetActive(visible);
-        multHudText.gameObject.SetActive(visible);
+        coinHudText.gameObject.SetActive(false);   // the run's coin count is not shown
+        multHudText.gameObject.SetActive(visible && endless);   // points only count in endless
         pauseButton.SetActive(visible);
         if (raceHudText != null) raceHudText.gameObject.SetActive(visible && mode == Mode.Race);
         ShowRivalHud(visible);
@@ -1402,7 +1413,7 @@ public partial class GameManager : MonoBehaviour
         Time.timeScale = 1f;
         pausePanel.SetActive(false);
         audioMan.StopDriving();
-        GoToMenu();
+        LeaveResults();     // a race goes back to the race list
     }
 
     void ApplySettings()
@@ -1433,8 +1444,11 @@ public partial class GameManager : MonoBehaviour
         }
     }
 
-    GameObject settingsAudioTab, settingsGeneralTab, settingsCreditsTab;
-    Text settingsTabAudio, settingsTabGeneral, settingsTabCredits;
+    GameObject settingsAudioTab, settingsGeneralTab, settingsCreditsTab, settingsContactTab;
+    Text settingsTabAudio, settingsTabGeneral, settingsTabCredits, settingsTabContact;
+
+    const string ContactWebsite = "www.meindgames.com";
+    const string ContactEmail = "delanomeindl@meindgames.com";
 
     static string CreditsText
     {
@@ -1453,17 +1467,56 @@ public partial class GameManager : MonoBehaviour
         }
     }
 
+    /// <summary>The website and the email, each a button that opens it.</summary>
+    void BuildContactTab(Transform t)
+    {
+        var head = MakeText(t, "ContactHead", 60, TextAnchor.MiddleCenter,
+            new Vector2(0.5f, 0.5f), new Vector2(0f, 360f), new Vector2(900f, 90f));
+        head.text = "GET IN TOUCH";
+        head.color = new Color(1f, 0.72f, 0.12f);
+
+        var webLabel = MakeText(t, "WebLabel", 32, TextAnchor.MiddleCenter,
+            new Vector2(0.5f, 0.5f), new Vector2(0f, 215f), new Vector2(800f, 50f), true);
+        webLabel.text = "WEBSITE";
+        webLabel.color = new Color(1f, 1f, 1f, 0.6f);
+        var web = MakeButton(t, "", 40, new Vector2(0f, 130f), new Vector2(780f, 110f),
+            () => Application.OpenURL("https://" + ContactWebsite), null, true);
+        ShowAsTyped(web, ContactWebsite);
+
+        var mailLabel = MakeText(t, "MailLabel", 32, TextAnchor.MiddleCenter,
+            new Vector2(0.5f, 0.5f), new Vector2(0f, -15f), new Vector2(800f, 50f), true);
+        mailLabel.text = "EMAIL";
+        mailLabel.color = new Color(1f, 1f, 1f, 0.6f);
+        var mail = MakeButton(t, "", 36, new Vector2(0f, -100f), new Vector2(780f, 110f),
+            () => Application.OpenURL("mailto:" + ContactEmail + "?subject=Driftline%20Eternal"), null, true);
+        ShowAsTyped(mail, ContactEmail);
+
+        var company = MakeText(t, "Company", 30, TextAnchor.MiddleCenter,
+            new Vector2(0.5f, 0.5f), new Vector2(0f, -280f), new Vector2(800f, 50f), true);
+        ShowAsTyped(company, "Meind Games LLC");
+        company.color = new Color(1f, 1f, 1f, 0.45f);
+    }
+
+    /// <summary>An address or a name: shown exactly as written, never translated.</summary>
+    static void ShowAsTyped(Text t, string s)
+    {
+        if (t is LocText lt) lt.SetShown(s);
+        else t.text = s;
+    }
+
     void SetSettingsTab(int tab)
     {
         settingsAudioTab.SetActive(tab == 0);
         settingsGeneralTab.SetActive(tab == 1);
         settingsCreditsTab.SetActive(tab == 2);
+        settingsContactTab.SetActive(tab == 3);
 
         var on = new Color(1f, 0.78f, 0.2f);
         var off = new Color(1f, 1f, 1f, 0.55f);
         settingsTabAudio.color = tab == 0 ? on : off;
         settingsTabGeneral.color = tab == 1 ? on : off;
         settingsTabCredits.color = tab == 2 ? on : off;
+        settingsTabContact.color = tab == 3 ? on : off;
         if (audioMan != null) audioMan.PlayTap();
     }
 
@@ -1686,6 +1739,17 @@ public partial class GameManager : MonoBehaviour
     [Tooltip("Seconds the player has to decide whether to revive.")]
     public float reviveDecisionTime = 5f;
     float reviveTimer;
+    Image reviveBarFill;              // runs out with the count
+    const float ReviveBarWidth = 700f;
+
+    void SetReviveBar(float t)
+    {
+        if (reviveBarFill == null) return;
+        float f = Mathf.Clamp01(t / Mathf.Max(0.01f, reviveDecisionTime));
+        reviveBarFill.rectTransform.sizeDelta = new Vector2(Mathf.Max(22f, ReviveBarWidth * f), 22f);
+        reviveBarFill.gameObject.SetActive(f > 0f);
+        reviveBarFill.color = reviveTimerText != null ? reviveTimerText.color : Color.white;
+    }
 
     int ScoreMultiplier
     {
@@ -1897,7 +1961,6 @@ public partial class GameManager : MonoBehaviour
     Text countdownText;
     GameObject racePanel;
     Text raceHudText;
-    readonly Text[] raceLevelLabels = new Text[RaceMode.TotalLevels];
     readonly Text[] upgradeLabels = new Text[3];
     // the price bar along the bottom of each upgrade tile
     readonly Text[] upgradePriceTexts = new Text[3];
@@ -2132,7 +2195,24 @@ public partial class GameManager : MonoBehaviour
     {
         menuPanel.SetActive(false);
         racePanel.SetActive(true);
+        // the GP with the next race to win, the first time; after that the
+        // one last looked at (or raced)
+        if (raceViewBiome < 0) raceViewBiome = FrontierBiome();
+        raceViewBiome = Mathf.Clamp(raceViewBiome, 0, LastShownBiome());
+        raceSwitchT = -1f;
+        raceBounceT = -1f;
+        raceCard.anchoredPosition = Vector2.zero;
+        raceFade.color = new Color(0f, 0f, 0f, 0f);
         RefreshRacePanel();
+        if (lobbyBiomeShown != raceViewBiome)
+        {
+            // the car drives on in the GP's biome, coming up out of the dark
+            SetLobbyBiome(raceViewBiome);
+            raceFade.color = Color.black;
+            raceSwitchDir = 0;
+            raceSwitchApplied = true;
+            raceSwitchT = RaceSwitchOut;
+        }
         audioMan.PlayTap();
     }
 
@@ -2141,6 +2221,17 @@ public partial class GameManager : MonoBehaviour
         if (upgradeAdPopup != null) upgradeAdPopup.SetActive(false);
         racePanel.SetActive(false);
         menuPanel.SetActive(true);
+        if (lobbyBiomeShown != 0)
+        {
+            // back to the lobby as it always is, out of a quick black
+            SetLobbyBiome(0);
+            if (finishBlackout != null)
+            {
+                finishBlackout.gameObject.SetActive(true);
+                finishBlackout.color = new Color(0f, 0f, 0f, 0.96f);
+                finishRevealT = 0f;
+            }
+        }
         audioMan.PlayTap();
     }
 
@@ -2151,15 +2242,7 @@ public partial class GameManager : MonoBehaviour
             upgradeLabels[u].text = UpgradeLine((RaceMode.Upgrade)u);
             RefreshUpgradePrice(u);
         }
-        for (int i = 0; i < RaceMode.TotalLevels; i++)
-        {
-            bool unlocked = RaceMode.IsUnlocked(i);
-            bool done = RaceMode.IsCompleted(i);
-            int stage = RaceMode.StageOf(i) + 1;
-            raceLevelLabels[i].text = unlocked ? (done ? stage + "\n<size=16>" + Loc.T("WON") + "</size>" : stage.ToString()) : "X";
-            raceLevelLabels[i].color = !unlocked ? new Color(1f, 1f, 1f, 0.35f)
-                                     : done ? new Color(0.45f, 1f, 0.55f) : Color.white;
-        }
+        RefreshRaceCard();
     }
 
     void StartRace(int level)
@@ -2169,6 +2252,7 @@ public partial class GameManager : MonoBehaviour
         EnsureRace();
         mode = Mode.Race;
         raceLevel = level;
+        raceViewBiome = RaceMode.BiomeOf(level);
         raceFinished = false;
 
         racePanel.SetActive(false);
@@ -2208,9 +2292,11 @@ public partial class GameManager : MonoBehaviour
         biomeBlend = dayNight;
         snowBlend = snow;
 
-        // a race is a straight fight: no coins, power-ups, tires or obstacles
-        // scattered around, just the track and the field
-        track.spawnCoins = false;
+        // a race is a straight fight: no power-ups, tires or obstacles
+        // scattered around, just the track, the field - and coins to pick up
+        // on the way round, starting a little past the line
+        track.spawnCoins = true;
+        track.ResumeSpawnsAt(car.DistanceTraveled + 60f);
         track.spawnPowerUps = false;
         track.spawnTirePickups = false;
         track.spawnObstacles = false;
@@ -2233,6 +2319,7 @@ public partial class GameManager : MonoBehaviour
         race.stockSpeedReference = raceBaseSpeed;
         race.BuildField(level, car.DistanceTraveled, raceBaseSpeed, MakeRacerVisual);
         race.PlaceAll();         // rivals sit on the grid while it counts down
+        NameRaceRivals(level);   // gamertags over their cars (GameManager.RaceExtras.cs)
     }
 
     /// <summary>
@@ -3148,7 +3235,9 @@ public partial class GameManager : MonoBehaviour
         finishPlaceText.color = new Color(1f, 0.82f, 0.12f, a);
         finishPlaceSuffix.color = new Color(1f, 0.82f, 0.12f, a);
 
-        if (finishAnimT >= 4.2f) EndFinishCinematic();
+        // then out: the place slides away and the race list comes up
+        // (GameManager.RaceExtras.cs)
+        TickFinishOut();
     }
 
     void EndFinishCinematic()
@@ -3228,22 +3317,35 @@ public partial class GameManager : MonoBehaviour
     void FinishRace(int place)
     {
         raceFinished = true;
+        int nextGp = RaceMode.BiomeOf(raceLevel) + 1;
+        bool nextWasOpen = nextGp < RaceMode.BiomeCount && BiomeOpen(nextGp);
         RaceMode.RecordResult(raceLevel, place);
+        // the first time it opens, the race list plays its lock coming off
+        if (nextGp < RaceMode.BiomeCount && !nextWasOpen && BiomeOpen(nextGp))
+            raceUnlockBiome = nextGp;
+        // winning a GP's last race opens the next GP: that is the one shown next
+        if (place == 1 && RaceMode.StageOf(raceLevel) == RaceMode.LevelsPerBiome - 1
+            && RaceMode.BiomeOf(raceLevel) + 1 < RaceMode.BiomeCount)
+            raceViewBiome = RaceMode.BiomeOf(raceLevel) + 1;
 
         int reward = place == 1 ? RaceMode.Reward(raceLevel)
                    : place <= 3 ? RaceMode.Reward(raceLevel) / 3 : 0;
-        if (reward > 0)
+        int prize = Mathf.RoundToInt(reward * RaceMode.CoinMultiplier());
+        // the coins picked up on the way round are banked with the prize
+        int raceCoins = prize + coinsThisRun;
+        if (raceCoins > 0)
         {
-            totalCoins += Mathf.RoundToInt(reward * RaceMode.CoinMultiplier());
+            totalCoins += raceCoins;
             PlayerPrefs.SetInt("Coins", totalCoins);
             PlayerPrefs.Save();
         }
 
         state = State.GameOver;
         PlayFinishCinematic(place);
+        SetFinishCoins(raceCoins);
         centerText.text = (place == 1 ? Loc.T("WINNER!") : Loc.F("FINISHED P{0}", place)) +
             "\n<size=30>" + Loc.T(place == 1 ? "NEXT RACE UNLOCKED" : "1ST PLACE UNLOCKS THE NEXT RACE") + "</size>" +
-            (reward > 0 ? "\n<size=34>" + Loc.F("+{0} COINS", reward) + "</size>" : "");
+            (raceCoins > 0 ? "\n<size=34>" + Loc.F("+{0} COINS", raceCoins) + "</size>" : "");
         // the result screen waits for the cinematic to play out
         centerText.gameObject.SetActive(false);
         gameOverPanel.SetActive(false);
@@ -5387,6 +5489,7 @@ public partial class GameManager : MonoBehaviour
         track.Init(startPos, startYaw);
         car.ResetRun(track);
         if (camFollow != null) camFollow.SnapToTarget();
+        lobbyBiomeShown = 0;     // a fresh lobby road, in the base biome
         EnterMenu();
     }
 
@@ -5511,6 +5614,8 @@ public partial class GameManager : MonoBehaviour
             : "NO AD REVIVES LEFT";
         reviveTimer = reviveDecisionTime;
         reviveTimerText.text = Mathf.CeilToInt(reviveTimer).ToString();
+        reviveTimerText.color = new Color(1f, 0.8f, 0.25f);
+        SetReviveBar(reviveTimer);
         revivePanel.SetActive(true);
         pauseButton.SetActive(false);
     }
@@ -5567,6 +5672,7 @@ public partial class GameManager : MonoBehaviour
         {
             reviveTimer = 0f;
             reviveTimerText.text = "0";
+            SetReviveBar(0f);
             DeclineRevive();          // out of time - the run is over
             return;
         }
@@ -5580,6 +5686,7 @@ public partial class GameManager : MonoBehaviour
         reviveTimerText.color = reviveTimer < 3f
             ? Color.Lerp(new Color(1f, 0.35f, 0.3f), new Color(1f, 0.8f, 0.25f), reviveTimer / 3f)
             : new Color(1f, 0.8f, 0.25f);
+        SetReviveBar(reviveTimer);
     }
 
     void ReviveWithTires()
@@ -5695,7 +5802,8 @@ public partial class GameManager : MonoBehaviour
         audioMan.PlayMenuMusic();
 
         int finalScore = Mathf.RoundToInt(score);
-        bool newBest = finalScore > best;
+        bool raceRun = mode == Mode.Race;
+        bool newBest = !raceRun && finalScore > best;   // a race never sets the high score
         if (newBest)
         {
             best = finalScore;
@@ -5705,7 +5813,7 @@ public partial class GameManager : MonoBehaviour
         if (mode == Mode.Endless) LbRecordRun(finalScore);
         // performance bonus: skilled runs pay far better than long ones,
         // since score already rewards drifting and near misses
-        int bonusCoins = Mathf.RoundToInt(score / Mathf.Max(1f, scorePerBonusCoin)
+        int bonusCoins = raceRun ? 0 : Mathf.RoundToInt(score / Mathf.Max(1f, scorePerBonusCoin)
                                           * Mathf.Pow(1f - revivePenalty, revivesThisRun)
                                           * RaceMode.CoinMultiplier());
         int runTotal = coinsThisRun + bonusCoins;
@@ -5719,6 +5827,15 @@ public partial class GameManager : MonoBehaviour
         centerText.gameObject.SetActive(false);
         pauseButton.SetActive(false);
 
+        // a race shows where you were, not points
+        if (raceRun)
+        {
+            int place = race != null ? race.PlayerPlace(car.DistanceTraveled) : RaceMode.Opponents + 1;
+            float togo = Mathf.Max(0f, raceFinishDistance - car.DistanceTraveled);
+            ShowGameOver(cause, 0, false, coinsThisRun, 0);
+            ShowRaceCrashLines(place, togo);
+            return;
+        }
         // beating your best earns its own screen; the results wait behind it
         if (newBest) ShowBestRun(cause, finalScore, coinsThisRun, bonusCoins);
         else ShowGameOver(cause, finalScore, false, coinsThisRun, bonusCoins);
@@ -6028,7 +6145,8 @@ public partial class GameManager : MonoBehaviour
         // drift combo: points build up while the chain is alive, and are only
         // banked into the score when you end the drift cleanly - crash and
         // the whole combo is lost
-        if (car.IsDrifting) pendingDrift += driftPointsPerSecond * DriftMultiplier() * dt * carPointMult * ScoreMultiplier;
+        // (a race is about the place, not points: no combo there)
+        if (car.IsDrifting && mode == Mode.Endless) pendingDrift += driftPointsPerSecond * DriftMultiplier() * dt * carPointMult * ScoreMultiplier;
 
         if (prevDriftTime > 0f && car.DriftTime <= 0f && pendingDrift > 0f)
         {
@@ -6099,14 +6217,13 @@ public partial class GameManager : MonoBehaviour
         scoreText.text = Mathf.RoundToInt(score).ToString();
         bestText.text = Loc.F("BEST  {0}", best);
         speedText.text = SpeedLabel(car.CurrentSpeed);
-        coinHudText.text = Loc.F("RUN COINS {0}", coinsThisRun);
         multHudText.text = "X" + ScoreMultiplier;
         TickRivalHud();
 
         UpdateItemBars();
 
         // drift multiplier floats next to the car
-        bool showDrift = state == State.Playing && car.IsDrifting;
+        bool showDrift = state == State.Playing && car.IsDrifting && mode == Mode.Endless;
         if (driftText.gameObject.activeSelf != showDrift) driftText.gameObject.SetActive(showDrift);
         if (showDrift && mainCam != null)
         {
@@ -6199,6 +6316,8 @@ public partial class GameManager : MonoBehaviour
             new Vector2(1f, 1f), new Vector2(-40f, -200f), new Vector2(400f, 60f));
         // the weekly rival to beat, under BEST (GameManager.Leaderboard.cs)
         BuildRivalHud(uiRoot);
+        // the race rivals' gamertags (GameManager.RaceExtras.cs)
+        BuildRaceTags(uiRoot);
 
         // always-visible currency counters, one per top corner, each on its
         // own dark pill so it reads over the bright sky and road behind it
@@ -6214,7 +6333,7 @@ public partial class GameManager : MonoBehaviour
             new Vector2(0f, 1f), new Vector2(62f, -96f), new Vector2(420f, 55f));
         coinHudText.color = new Color(1f, 0.9f, 0.45f);
         multHudText = MakeText(uiRoot, "MultHud", 34, TextAnchor.UpperLeft,
-            new Vector2(0f, 1f), new Vector2(62f, -158f), new Vector2(400f, 50f));
+            new Vector2(0f, 1f), new Vector2(62f, -96f), new Vector2(400f, 50f));
         multHudText.color = new Color(0.7f, 0.9f, 1f);
         itemHudText = MakeText(uiRoot, "ItemHud", 28, TextAnchor.UpperLeft,
             new Vector2(0f, 1f), new Vector2(62f, -218f), new Vector2(500f, 260f));
@@ -6333,6 +6452,7 @@ public partial class GameManager : MonoBehaviour
             new Vector2(340f, 70f), true);
         version.text = GameVersion;
         version.color = new Color(1f, 1f, 1f, 0.28f);
+        HookAdCheck(version);   // five taps opens the hidden ad check
 
         // RACE is the second big button, straight under PLAY, on a
         // chequered flag
@@ -6391,16 +6511,30 @@ public partial class GameManager : MonoBehaviour
         sTitle.color = new Color(1f, 0.72f, 0.12f);
 
         // three sections rather than one long column of sliders
+        // four tabs across the card; a long word shrinks to fit its tab
+        const float TabW = 226f, TabStep = 238f;
         settingsTabAudio = MakeButton(settingsPanel.transform, "AUDIO", 34,
-            new Vector2(-320f, 512f), new Vector2(300f, 88f), () => SetSettingsTab(0));
+            new Vector2(-1.5f * TabStep, 512f), new Vector2(TabW, 88f), () => SetSettingsTab(0));
         settingsTabGeneral = MakeButton(settingsPanel.transform, "GENERAL", 34,
-            new Vector2(0f, 512f), new Vector2(300f, 88f), () => SetSettingsTab(1));
+            new Vector2(-0.5f * TabStep, 512f), new Vector2(TabW, 88f), () => SetSettingsTab(1));
         settingsTabCredits = MakeButton(settingsPanel.transform, "CREDITS", 34,
-            new Vector2(320f, 512f), new Vector2(300f, 88f), () => SetSettingsTab(2));
+            new Vector2(0.5f * TabStep, 512f), new Vector2(TabW, 88f), () => SetSettingsTab(2));
+        settingsTabContact = MakeButton(settingsPanel.transform, "CONTACT", 34,
+            new Vector2(1.5f * TabStep, 512f), new Vector2(TabW, 88f), () => SetSettingsTab(3));
+        foreach (var tabLabel in new[] { settingsTabAudio, settingsTabGeneral, settingsTabCredits, settingsTabContact })
+        {
+            tabLabel.rectTransform.sizeDelta = new Vector2(TabW - 22f, 80f);
+            tabLabel.horizontalOverflow = HorizontalWrapMode.Wrap;
+            tabLabel.verticalOverflow = VerticalWrapMode.Truncate;
+            tabLabel.resizeTextForBestFit = true;
+            tabLabel.resizeTextMinSize = 10;
+            tabLabel.resizeTextMaxSize = tabLabel.fontSize;
+        }
 
         settingsAudioTab = MakeTabGroup(settingsPanel.transform, "AudioTab");
         settingsGeneralTab = MakeTabGroup(settingsPanel.transform, "GeneralTab");
         settingsCreditsTab = MakeTabGroup(settingsPanel.transform, "CreditsTab");
+        settingsContactTab = MakeTabGroup(settingsPanel.transform, "ContactTab");
 
         // --- audio
         AddSliderRow(settingsAudioTab.transform, "MASTER VOLUME", 340f, volumeSetting, SetVolume);
@@ -6434,6 +6568,8 @@ public partial class GameManager : MonoBehaviour
         credLine.text = CreditsText;
         credLine.color = new Color(1f, 1f, 1f, 0.92f);
         credLine.lineSpacing = 1.15f;
+
+        BuildContactTab(settingsContactTab.transform);
 
         SetSettingsTab(0);
 
@@ -6673,106 +6809,9 @@ public partial class GameManager : MonoBehaviour
         var finishParts = new List<Transform>();
         for (int i = finishFrom; i < uiRoot.childCount; i++) finishParts.Add(uiRoot.GetChild(i));
 
-        // --- race level select: 4 biomes x 5 levels
-        racePanel = MakePanel(uiRoot, "RacePanel");
-        // content runs from +1050 down to -1120, 90 under the last row of
-        // levels; the card carries on past the end so it runs into the footer
-        Color raceWindow = new Color(0.13f, 0.09f, 0.2f, 0.93f);
-        Transform raceScroll = MakeScrollArea(racePanel, 2170f, -35f);
-        MakeCard(raceScroll, new Vector2(0f, -155f), new Vector2(1010f, 2090f), raceWindow);
-        var rTitle2 = MakeText(raceScroll, "RaceTitle", 80, TextAnchor.MiddleCenter,
-            new Vector2(0.5f, 0.5f), new Vector2(0f, 800f), new Vector2(900f, 110f));
-        rTitle2.text = "RACES";
-        rTitle2.color = new Color(1f, 0.72f, 0.12f);
-
-        // --- three upgrades, in a panel of their own above the level grid, so
-        // they read as a separate thing from the levels under them
-        MakeCard(raceScroll, new Vector2(0f, 462.5f), new Vector2(960f, 485f),
-            new Color(0.22f, 0.17f, 0.34f, 1f));
-        var upgHeader = MakeText(raceScroll, "UpgHeader", 42, TextAnchor.MiddleCenter,
-            new Vector2(0.5f, 0.5f), new Vector2(0f, 665f), new Vector2(900f, 60f));
-        upgHeader.text = "UPGRADES";
-        upgHeader.color = new Color(1f, 0.8f, 0.35f);
-        // each upgrade is shown with a picture of what it does: a speedometer
-        // for top speed, a car shunting another aside for chassis strength,
-        // and a growing stack of coins for the coin bonus
-        string[] upgIcons = { "UI/icon_engine", "UI/icon_chassis", "UI/icon_coinbonus" };
-        // a colour each, picked so its picture stands out on it: red for the
-        // engine, green for the chassis, blue for the coin bonus
-        Color[] upgColors =
-        {
-            new Color(0.85f, 0.22f, 0.20f),
-            new Color(0.20f, 0.62f, 0.30f),
-            new Color(0.20f, 0.45f, 0.85f),
-        };
-        for (int u = 0; u < 3; u++)
-        {
-            RaceMode.Upgrade up = (RaceMode.Upgrade)u;
-            upgradeLabels[u] = MakeButton(raceScroll, "Upg" + u, 30,
-                new Vector2(-315f + u * 315f, 430f), new Vector2(305f, 380f),
-                () => BuyUpgrade(up), upgColors[u], true);
-            // the level and what it gives sit under the picture
-            upgradeLabels[u].rectTransform.anchoredPosition = new Vector2(0f, -48f);
-            upgradeLabels[u].rectTransform.sizeDelta = new Vector2(295f, 90f);
-
-            // and what the upgrade is, across the top
-            var upgName = MakeText(upgradeLabels[u].transform.parent, "UpgName" + u, 38,
-                TextAnchor.MiddleCenter, new Vector2(0.5f, 0.5f), new Vector2(0f, 150f),
-                new Vector2(290f, 50f), true);
-            upgName.text = RaceMode.UpgradeNames[u];
-
-            var icoGo = new GameObject("UpgIcon" + u);
-            icoGo.transform.SetParent(upgradeLabels[u].transform.parent, false);
-            var ico = icoGo.AddComponent<RawImage>();
-            ico.raycastTarget = false;
-            ico.texture = Resources.Load<Texture2D>(upgIcons[u]);
-            var icoRt = ico.rectTransform;
-            icoRt.anchorMin = icoRt.anchorMax = icoRt.pivot = new Vector2(0.5f, 0.5f);
-            icoRt.anchoredPosition = new Vector2(0f, 54f);
-            icoRt.sizeDelta = new Vector2(116f, 116f);
-
-            // the price, on a darker bar along the bottom: a coin, the amount,
-            // and the green play sign while an ad can pay for it instead
-            Transform tile = upgradeLabels[u].transform.parent;
-            MakeCard(tile, new Vector2(0f, -140f), new Vector2(271f, 72f),
-                new Color(0f, 0f, 0f, 0.32f));
-            upgradePriceCoins[u] = MakeCurrencyIcon(tile, new Vector2(0.5f, 0.5f),
-                new Vector2(-60f, -140f), 46f, false);
-            upgradePriceTexts[u] = MakeText(tile, "UpgPrice" + u, 46, TextAnchor.MiddleCenter,
-                new Vector2(0.5f, 0.5f), new Vector2(10f, -140f), new Vector2(220f, 70f), true);
-            var chipGo = new GameObject("AdChip");
-            chipGo.transform.SetParent(tile, false);
-            var chip = chipGo.AddComponent<RawImage>();
-            chip.texture = GetAdChipTexture();
-            chip.raycastTarget = false;
-            var chipRt = chip.rectTransform;
-            chipRt.anchorMin = chipRt.anchorMax = chipRt.pivot = new Vector2(0.5f, 0.5f);
-            chipRt.anchoredPosition = new Vector2(100f, -140f);
-            chipRt.sizeDelta = new Vector2(42f, 42f);
-            chipGo.SetActive(false);
-            upgradeAdChips[u] = chipGo;
-        }
-
-        // the level grid starts a clear gap under the upgrades' panel
-        for (int b = 0; b < RaceMode.BiomeCount; b++)
-        {
-            float rowY = 140f - b * 330f;
-            var bLabel = MakeText(raceScroll, "RaceBiome" + b, 38, TextAnchor.MiddleCenter,
-                new Vector2(0.5f, 0.5f), new Vector2(0f, rowY), new Vector2(900f, 60f));
-            bLabel.text = RaceMode.BiomeNames[b];
-            bLabel.color = new Color(0.7f, 0.9f, 1f);
-
-            for (int s2 = 0; s2 < RaceMode.LevelsPerBiome; s2++)
-            {
-                int level = b * RaceMode.LevelsPerBiome + s2;
-                float x = -380f + s2 * 190f;
-                Text lbl = MakeButton(raceScroll, "L" + level, 40,
-                    new Vector2(x, rowY - 110f), new Vector2(165f, 140f),
-                    () => StartRace(level));
-                raceLevelLabels[level] = lbl;
-            }
-        }
-        MakeScrollFooter(racePanel, raceWindow, CloseRaces);
+        // --- race select: one Grand Prix per biome, flicked through like
+        // the garage's cars (GameManager.RaceSelect.cs)
+        BuildRaceSelect(uiRoot);
         BuildUpgradeAdPopup();
 
         // race HUD: position and distance remaining
@@ -6987,30 +7026,38 @@ public partial class GameManager : MonoBehaviour
         MakeCard(revivePanel.transform, new Vector2(0f, 0f), new Vector2(950f, 900f),
             new Color(0.13f, 0.09f, 0.2f, 0.95f));
         var rTitle = MakeText(revivePanel.transform, "RTitle", 76, TextAnchor.MiddleCenter,
-            new Vector2(0.5f, 0.5f), new Vector2(0f, 310f), new Vector2(900f, 110f));
+            new Vector2(0.5f, 0.5f), new Vector2(0f, 335f), new Vector2(900f, 110f));
         rTitle.text = "CRASHED!";
         rTitle.color = new Color(1f, 0.4f, 0.3f);
         var rSub = MakeText(revivePanel.transform, "RSub", 40, TextAnchor.MiddleCenter,
-            new Vector2(0.5f, 0.5f), new Vector2(0f, 210f), new Vector2(900f, 70f));
+            new Vector2(0.5f, 0.5f), new Vector2(0f, 250f), new Vector2(900f, 70f));
         rSub.text = "KEEP GOING?";
         // ticking clock - the offer expires
         reviveTimerText = MakeText(revivePanel.transform, "RTimer", 66, TextAnchor.MiddleCenter,
-            new Vector2(0.5f, 0.5f), new Vector2(0f, 145f), new Vector2(900f, 90f));
+            new Vector2(0.5f, 0.5f), new Vector2(0f, 178f), new Vector2(900f, 90f));
         reviveTimerText.color = new Color(1f, 0.8f, 0.25f);
+        // and a bar that runs out with it
+        var rBarBack = MakeCard(revivePanel.transform, new Vector2(0f, 118f),
+            new Vector2(ReviveBarWidth + 14f, 36f), new Color(0f, 0f, 0f, 0.55f));
+        reviveBarFill = MakeCard(rBarBack.transform, Vector2.zero,
+            new Vector2(ReviveBarWidth, 22f), new Color(1f, 0.8f, 0.25f));
+        var rbf = reviveBarFill.rectTransform;
+        rbf.anchorMin = rbf.anchorMax = rbf.pivot = new Vector2(0f, 0.5f);
+        rbf.anchoredPosition = new Vector2(7f, 0f);
         reviveTireLabel = MakeButton(revivePanel.transform, "TIRES", 44,
-            new Vector2(0f, 60f), new Vector2(760f, 120f), ReviveWithTires, null, true);
+            new Vector2(0f, 28f), new Vector2(760f, 120f), ReviveWithTires, null, true);
         // the tyre reads as part of the price, so it sits just after the number
         MakeCurrencyIcon(reviveTireLabel.transform.parent, new Vector2(0.5f, 0.5f),
             new Vector2(150f, 0f), 62f, true);
         reviveTireLabel.rectTransform.anchoredPosition = new Vector2(-34f, 0f);
         reviveHaveText = MakeText(revivePanel.transform, "RHave", 38,
             TextAnchor.MiddleCenter, new Vector2(0.5f, 0.5f),
-            new Vector2(0f, -30f), new Vector2(700f, 50f), true);
+            new Vector2(0f, -62f), new Vector2(700f, 50f), true);
         reviveHaveText.color = new Color(1f, 1f, 1f, 0.9f);
         reviveAdLabel = MakeButton(revivePanel.transform, "AD", 38,
-            new Vector2(0f, -132f), new Vector2(760f, 120f), ReviveWithAd, null, true);
+            new Vector2(0f, -160f), new Vector2(760f, 120f), ReviveWithAd, null, true);
         MakeButton(revivePanel.transform, "GIVE UP", 40,
-            new Vector2(0f, -300f), new Vector2(560f, 110f), DeclineRevive);
+            new Vector2(0f, -318f), new Vector2(560f, 110f), DeclineRevive);
 
         // The coin and tire counters were made first, so every window drew
         // over them. They come to the front now, above the menu, the shop,
@@ -7243,6 +7290,8 @@ public partial class GameManager : MonoBehaviour
     Image goDim;
     Text goTitle, goScore, goBestLine, goRunLabel;
     readonly Text[] goStatValue = new Text[2];
+    readonly Text[] goStatLabel = new Text[2];
+    bool goRaceCrash;   // the death screen of a race: the place, no points
     float goAnimT = -1f;
     int goTargetScore;
     bool goWasBest;
@@ -7302,6 +7351,7 @@ public partial class GameManager : MonoBehaviour
                 new Vector2(0.5f, 0.5f), new Vector2(-160f, y), new Vector2(400f, 60f), true);
             lab.text = labels[i];
             lab.color = new Color(1f, 1f, 1f, 0.6f);
+            goStatLabel[i] = lab;
             goStatValue[i] = MakeText(goCard, "GOStatV" + i, 32, TextAnchor.MiddleRight,
                 new Vector2(0.5f, 0.5f), new Vector2(160f, y), new Vector2(400f, 60f), true);
         }
@@ -7310,7 +7360,7 @@ public partial class GameManager : MonoBehaviour
             new Vector2(0f, -320f), new Vector2(700f, 140f), RestartRun,
             new Color(0.16f, 0.62f, 0.32f));
         MakeButton(goCard, "MENU", 40,
-            new Vector2(0f, -470f), new Vector2(700f, 110f), GoToMenu);
+            new Vector2(0f, -470f), new Vector2(700f, 110f), LeaveResults);
     }
 
     /// <summary>Fills in the death screen and starts its entrance.</summary>
@@ -7330,6 +7380,15 @@ public partial class GameManager : MonoBehaviour
         goStatValue[0].text = Loc.F("{0} M", Mathf.RoundToInt(car.DistanceTraveled));
         goStatValue[1].text = "+" + bonus;
         goAnimT = 0f;
+        // an endless run's lines (a race crash hides them again afterwards)
+        goRaceCrash = false;
+        goRunLabel.text = "SCORE";
+        goBestLine.gameObject.SetActive(true);
+        for (int i = 0; i < goStatValue.Length; i++)
+        {
+            goStatValue[i].gameObject.SetActive(true);
+            goStatLabel[i].gameObject.SetActive(true);
+        }
         gameOverPanel.SetActive(true);
         gameOverPanel.transform.SetAsLastSibling();
         // where the run left the player in the week (and who passed them)
@@ -7339,6 +7398,22 @@ public partial class GameManager : MonoBehaviour
         {
             lbShowAfterRun = false;
             OpenLeaderboard(true);
+        }
+    }
+
+    /// <summary>A race's death screen: the place the car was in and how far was left.</summary>
+    void ShowRaceCrashLines(int place, float togo)
+    {
+        goRaceCrash = true;
+        goRunLabel.text = "PLACE";
+        goScore.text = Loc.F("P{0}/{1}", place, RaceMode.Opponents + 1);
+        goScore.color = Color.white;
+        goBestLine.text = Loc.F("{0}M TO GO", Mathf.RoundToInt(togo));
+        goBestLine.color = new Color(1f, 1f, 1f, 0.85f);
+        for (int i = 0; i < goStatValue.Length; i++)
+        {
+            goStatValue[i].gameObject.SetActive(false);
+            goStatLabel[i].gameObject.SetActive(false);
         }
     }
 
@@ -7353,8 +7428,10 @@ public partial class GameManager : MonoBehaviour
         goCard.localScale = Vector3.one * Mathf.Lerp(0.86f, 1f, ease);
         goCard.anchoredPosition = new Vector2(0f, Mathf.Lerp(90f, 0f, ease));
 
-        // the score reels up rather than just appearing
-        float c = Mathf.Clamp01((goAnimT - 0.2f) / 0.9f);
+        // the score reels up rather than just appearing (a race has none)
+        float c = goRaceCrash ? -1f : Mathf.Clamp01((goAnimT - 0.2f) / 0.9f);
+        if (c >= 0f)
+        {
         int shown = Mathf.RoundToInt(Mathf.Lerp(0f, goTargetScore,
             1f - Mathf.Pow(1f - c, 3f)));
         goScore.text = shown.ToString();
@@ -7362,6 +7439,7 @@ public partial class GameManager : MonoBehaviour
             ? Color.Lerp(Color.white, new Color(1f, 0.85f, 0.2f),
                          0.5f + 0.5f * Mathf.Sin(goAnimT * 3.5f))
             : Color.white;
+        }
 
         // the red wash floods in on impact, then settles
         float wash = Mathf.Lerp(0.8f, 0.62f, Mathf.Clamp01(goAnimT / 0.8f));

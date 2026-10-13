@@ -380,6 +380,8 @@ public partial class GameManager
     int lbRunOldScore;        // the week's best before this run
     int lbOvertaker = -1;     // the rival that edged past after this run
     int lbOvertakerFrom;      // its score before it did
+    readonly int[] lbPrevScores = new int[LbBots];   // the rivals before this run
+    bool lbRivalsMoved;       // any rival's score changed after this run
     bool lbJustLocked;        // this run locked 1st in
 
     /// <summary>
@@ -392,6 +394,7 @@ public partial class GameManager
         lbOvertaker = -1;
         lbJustLocked = false;
         lbRunCounted = true;
+        System.Array.Copy(lbScores, lbPrevScores, LbBots);
         bool improved = finalScore > lbWeekBest;
         lbRunOldScore = lbWeekBest;
         if (improved)
@@ -410,8 +413,14 @@ public partial class GameManager
                 PlayerPrefs.SetInt(LbLockedKey, 1);
                 LbQueuePrize(1, lbLeague);
             }
-            else LbRivalsAnswer();
+            else
+            {
+                LbRivalsAnswer();
+                LbRivalsTrain();
+            }
         }
+        lbRivalsMoved = false;
+        for (int i = 0; i < LbBots; i++) if (lbScores[i] != lbPrevScores[i]) lbRivalsMoved = true;
         PlayerPrefs.Save();
         // the ranking comes up after a new weekly best, and whenever a rival
         // has just edged past
@@ -441,6 +450,29 @@ public partial class GameManager
         lbOvertakerFrom = lbScores[chaser];
         lbScores[chaser] = target;
         lbOvertaker = chaser;
+        LbSaveBots();
+    }
+
+    /// <summary>
+    /// The rest of the field plays too: after every run a few rivals put up
+    /// a better score - a little, never past what they have in them this
+    /// week. Those ahead of the player can pull further away; those behind
+    /// close in, but only the one right behind is allowed past (above).
+    /// </summary>
+    void LbRivalsTrain()
+    {
+        int count = Random.Range(2, 5);
+        for (int k = 0; k < count; k++)
+        {
+            int i = Random.Range(0, LbBots);
+            if (i == lbOvertaker) continue;
+            int s = lbScores[i];
+            if (s >= lbReach[i]) continue;
+            int gain = Mathf.Max(1, Mathf.RoundToInt(s * Random.Range(0.01f, 0.06f)));
+            int next = Mathf.Min(lbReach[i], s + gain);
+            if (s < lbWeekBest && next >= lbWeekBest) next = lbWeekBest - 1;
+            if (next > s) lbScores[i] = next;
+        }
         LbSaveBots();
     }
 
@@ -647,7 +679,7 @@ public partial class GameManager
     float[] lbFromY, lbToY;
     float lbAnimT = -1f;
     int lbAnimFromScore, lbAnimToScore;          // the player's row counts between these
-    int lbAnimMover = -1, lbAnimMoverFrom, lbAnimMoverTo;   // a rival's row, the same
+    int[] lbAnimFromBots, lbAnimToBots;          // the rivals' scores, the same
     bool lbOvertakeToShow;
     bool lbWaitingForPrize, lbPromotionToShow;
     float lbResetRefreshAt;
@@ -814,48 +846,44 @@ public partial class GameManager
     }
 
     /// <summary>
-    /// The order the board stands in for a given score of the player's.
-    /// <paramref name="mover"/> (if not -1) is a rival taken at
-    /// <paramref name="moverScore"/> instead of its score now.
+    /// The order the board stands in for a given score of the player's, with
+    /// the rivals at <paramref name="bots"/> (null = as they stand now).
     /// </summary>
-    int[] LbSlots(int playerScore, int mover = -1, int moverScore = 0)
+    int[] LbSlots(int playerScore, int[] bots = null)
     {
+        if (bots == null) bots = lbScores;
         // entries: rivals 0..LbBots-1, the player at LbBots
         var order = new List<int>();
         for (int i = 0; i <= LbBots; i++) order.Add(i);
-        int ScoreOf(int e)
+        order.Sort((x, y) =>
         {
-            if (e == LbBots) return playerScore;
-            return e == mover ? moverScore : lbScores[e];
-        }
-        order.Sort((a, b) =>
-        {
-            int sa = ScoreOf(a), sb = ScoreOf(b);
-            if (sa != sb) return sb.CompareTo(sa);
+            int sx = x == LbBots ? playerScore : bots[x];
+            int sy = y == LbBots ? playerScore : bots[y];
+            if (sx != sy) return sy.CompareTo(sx);
             // the player has to beat a score, not equal it
-            if (a == LbBots) return 1;
-            if (b == LbBots) return -1;
-            return a.CompareTo(b);
+            if (x == LbBots) return 1;
+            if (y == LbBots) return -1;
+            return x.CompareTo(y);
         });
         var slot = new int[LbBots + 1];
-        for (int s = 0; s < order.Count; s++) slot[order[s]] = s;
+        for (int k = 0; k < order.Count; k++) slot[order[k]] = k;
         return slot;
     }
 
     static float LbSlotY(int slot) { return -LbRowStep * 0.5f - 4f - slot * LbRowStep; }
 
     /// <summary>Lays the rows out (no animation).</summary>
-    void LbLayout(int playerScore, int mover = -1, int moverScore = 0)
+    void LbLayout(int playerScore, int[] bots = null)
     {
-        int[] slot = LbSlots(playerScore, mover, moverScore);
+        if (bots == null) bots = lbScores;
+        int[] slot = LbSlots(playerScore, bots);
         for (int i = 0; i <= LbBots; i++)
         {
-            int s = i == LbBots ? playerScore : i == mover ? moverScore : lbScores[i];
+            int s = i == LbBots ? playerScore : bots[i];
             lbRows[i].rt.anchoredPosition = new Vector2(0f, LbSlotY(slot[i]));
             lbRows[i].rt.localScale = Vector3.one;
             LbFillRow(i, slot[i], s);
         }
-        if (mover >= 0) lbRows[mover].rt.SetAsLastSibling();
         lbRows[LbBots].rt.SetAsLastSibling();
     }
 
@@ -977,16 +1005,14 @@ public partial class GameManager
         if (afterRun && improved)
         {
             // the climb is played against the board as it stood before the
-            // rival answered - and then the rival answers
-            int mover = lbOvertaker;
-            int moverFrom = mover >= 0 ? lbOvertakerFrom : 0;
-            LbStartAnim(lbRunOldScore, lbWeekBest, mover, moverFrom, moverFrom);
-            lbOvertakeToShow = mover >= 0;
+            // run - and then the rivals answer it
+            LbStartAnim(lbRunOldScore, lbWeekBest, lbPrevScores, lbPrevScores);
+            lbOvertakeToShow = lbRivalsMoved;
         }
-        else if (afterRun && lbOvertaker >= 0)
+        else if (afterRun && lbRivalsMoved)
         {
-            // no new best this time: straight to the rival edging past
-            LbShowOvertake();
+            // no new best this time: straight to the rivals moving
+            LbShowRivalsMove();
         }
         else
         {
@@ -999,13 +1025,15 @@ public partial class GameManager
 
     /// <summary>
     /// Moves the rows from one standing to another: the player's score goes
-    /// from <paramref name="fromScore"/> to <paramref name="toScore"/>, and a
-    /// rival (<paramref name="mover"/>, or -1) from one score to another.
+    /// from <paramref name="fromScore"/> to <paramref name="toScore"/>, and
+    /// the rivals' from one set of scores to another (null = as they stand).
     /// </summary>
-    void LbStartAnim(int fromScore, int toScore, int mover, int moverFrom, int moverTo)
+    void LbStartAnim(int fromScore, int toScore, int[] fromBots, int[] toBots)
     {
-        int[] from = LbSlots(fromScore, mover, moverFrom);
-        int[] to = LbSlots(toScore, mover, moverTo);
+        lbAnimFromBots = (int[])(fromBots ?? lbScores).Clone();
+        lbAnimToBots = (int[])(toBots ?? lbScores).Clone();
+        int[] from = LbSlots(fromScore, lbAnimFromBots);
+        int[] to = LbSlots(toScore, lbAnimToBots);
         lbFromY = new float[LbBots + 1];
         lbToY = new float[LbBots + 1];
         for (int i = 0; i <= LbBots; i++)
@@ -1013,13 +1041,14 @@ public partial class GameManager
             lbFromY[i] = LbSlotY(from[i]);
             lbToY[i] = LbSlotY(to[i]);
         }
-        LbLayout(fromScore, mover, moverFrom);
+        LbLayout(fromScore, lbAnimFromBots);
+        // the rows that move are drawn over the ones they pass
+        for (int i = 0; i < LbBots; i++)
+            if (lbAnimFromBots[i] != lbAnimToBots[i]) lbRows[i].rt.SetAsLastSibling();
+        lbRows[LbBots].rt.SetAsLastSibling();
         LbCenterOnPlayer();
         lbAnimFromScore = fromScore;
         lbAnimToScore = toScore;
-        lbAnimMover = mover;
-        lbAnimMoverFrom = moverFrom;
-        lbAnimMoverTo = moverTo;
         lbAnimT = 0f;
         lbScroll.StopMovement();
         lbScroll.enabled = false;   // the list is driven until it lands
@@ -1029,29 +1058,35 @@ public partial class GameManager
     {
         lbAnimT = -1f;
         lbScroll.enabled = true;
-        LbLayout(lbAnimToScore, lbAnimMover, lbAnimMoverTo);
+        LbLayout(lbAnimToScore, lbAnimToBots);
         LbCenterOnPlayer();
 
         if (lbOvertakeToShow)
         {
-            // and now the rival behind answers, edging past by a hair
+            // and now the rivals answer the run
             lbOvertakeToShow = false;
-            LbShowOvertake();
+            LbShowRivalsMove();
             return;
         }
         if (LbRankOf(lbAnimToScore) <= 3 || lbJustLocked) audioMan.PlayPowerUp();
         LbRefreshButton();
     }
 
-    /// <summary>The rival behind the player slides up past their row.</summary>
-    void LbShowOvertake()
+    /// <summary>
+    /// The rest of the field answers the run: the rivals that put up a
+    /// better score count up and move, and the one right behind the player
+    /// slides past their row if it got there.
+    /// </summary>
+    void LbShowRivalsMove()
     {
-        int m = lbOvertaker;
-        lbHintText.text = Loc.F("{0} PASSED YOU", lbNames[m]);
-        lbHintText.color = LbWarnColor;
-        FitToWidth(lbHintText, 34, 920f, true);
-        LbStartAnim(lbWeekBest, lbWeekBest, m, lbOvertakerFrom, lbScores[m]);
-        audioMan.PlayNearMiss();
+        if (lbOvertaker >= 0)
+        {
+            lbHintText.text = Loc.F("{0} PASSED YOU", lbNames[lbOvertaker]);
+            lbHintText.color = LbWarnColor;
+            FitToWidth(lbHintText, 34, 920f, true);
+            audioMan.PlayNearMiss();
+        }
+        LbStartAnim(lbWeekBest, lbWeekBest, lbPrevScores, lbScores);
     }
 
     void LeaderboardButton()
@@ -1190,7 +1225,7 @@ public partial class GameManager
                 SetLbTitle(Loc.F("PROMOTED TO {0}!", Loc.T(LeagueNames[lbLeague])));
                 lbLeaguePill.rectTransform.localScale = Vector3.one * 1.35f;
                 audioMan.PlayFinishWhoosh();
-                LbStartAnim(0, lbWeekBest, -1, 0, 0);
+                LbStartAnim(0, lbWeekBest, null, null);
             }
             else LbRefreshHint();
             LbRefreshButton();
@@ -1226,11 +1261,14 @@ public partial class GameManager
             you.score.text = Mathf.RoundToInt(Mathf.Lerp(lbAnimFromScore, lbAnimToScore, e)).ToString();
         }
         you.rank.text = (LbSlotAt(you.rt) + 1).ToString();
-        if (lbAnimMover >= 0 && lbAnimMoverFrom != lbAnimMoverTo)
+        for (int i = 0; i < LbBots; i++)
         {
-            var m = lbRows[lbAnimMover];
+            // every row's number follows where it is on the list
+            lbRows[i].rank.text = (LbSlotAt(lbRows[i].rt) + 1).ToString();
+            if (lbAnimFromBots[i] == lbAnimToBots[i]) continue;
+            var m = lbRows[i];
             m.rt.localScale = Vector3.one * lift;
-            m.score.text = Mathf.RoundToInt(Mathf.Lerp(lbAnimMoverFrom, lbAnimMoverTo, e)).ToString();
+            m.score.text = Mathf.RoundToInt(Mathf.Lerp(lbAnimFromBots[i], lbAnimToBots[i], e)).ToString();
             m.rank.text = (LbSlotAt(m.rt) + 1).ToString();
         }
         LbCenterOnPlayer();
