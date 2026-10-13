@@ -3507,8 +3507,12 @@ public class TrackGenerator : MonoBehaviour
             currentChunkFirstSampleIndexOffset = Mathf.Max(0, currentChunkFirstSampleIndexOffset - removeCount);
         }
 
-        PruneList(chunks, cutoff);
-        PruneList(decorations, cutoff);
+        // Road and scenery are only taken away once the camera cannot see
+        // them. Going purely by distance along the road removed them in plain
+        // view wherever the track doubled back - a hairpin puts road from
+        // 150 m back right in front of you - and the trees there blinked out.
+        PruneOutOfView(chunks, cutoff);
+        PruneOutOfView(decorations, cutoff);
 
         for (int i = obstacles.Count - 1; i >= 0; i--)
         {
@@ -3675,6 +3679,54 @@ public class TrackGenerator : MonoBehaviour
                 }
             }
         }
+    }
+
+    /// <summary>How much further back than the cutoff something may linger while still in view.</summary>
+    const float ViewKeepExtra = 350f;
+    Camera pruneCam;
+
+    /// <summary>
+    /// Like <see cref="PruneList"/>, but anything past the cutoff that the
+    /// camera can still see stays until it has gone behind the camera or into
+    /// the fog - or until it is so far back down the road that it goes
+    /// regardless, so nothing piles up.
+    /// </summary>
+    void PruneOutOfView(List<Chunk> list, float cutoff)
+    {
+        if (pruneCam == null) pruneCam = Camera.main;
+        float hardCutoff = cutoff - ViewKeepExtra;
+        float far = (RenderSettings.fog ? RenderSettings.fogEndDistance : 400f) + 15f;
+
+        for (int i = list.Count - 1; i >= 0; i--)
+        {
+            Chunk c = list[i];
+            if (c.endDistance >= cutoff) continue;
+            if (c.go != null && c.endDistance >= hardCutoff && pruneCam != null
+                && StillInView(c, pruneCam, far)) continue;
+
+            if (c.go != null) Object.Destroy(c.go);
+            list.RemoveAt(i);
+        }
+    }
+
+    static bool StillInView(Chunk c, Camera cam, float far)
+    {
+        if (!c.hasBounds)
+        {
+            // a road chunk: measured once, the first time it is asked about
+            var rends = c.go.GetComponentsInChildren<Renderer>();
+            if (rends.Length == 0) return false;
+            Bounds b = rends[0].bounds;
+            for (int i = 1; i < rends.Length; i++) b.Encapsulate(rends[i].bounds);
+            c.bounds = b;
+            c.hasBounds = true;
+        }
+
+        Vector3 camPos = cam.transform.position;
+        if (c.bounds.SqrDistance(camPos) > far * far) return false;      // lost in the fog
+        Vector3 to = c.bounds.center - camPos;
+        float reach = c.bounds.extents.magnitude;
+        return Vector3.Dot(to, cam.transform.forward) > -reach;           // not wholly behind
     }
 
     void PruneList(List<Chunk> list, float cutoff)
