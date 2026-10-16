@@ -3,9 +3,10 @@ using UnityEngine.UI;
 
 /// <summary>
 /// A hidden screen for finding out why ads do not show: tap the version
-/// number on the main menu five times. It lists what LevelPlay reported -
-/// whether it started, and why the last ad failed to load - and opens
-/// LevelPlay's own test suite. Off when AdManager.Diagnostics is false.
+/// number on the main menu five times, then enter the password. It lists
+/// what LevelPlay reported - whether it started, and why the last ad failed
+/// to load - and opens LevelPlay's own test suite. Off when
+/// AdManager.Diagnostics is false.
 /// </summary>
 public partial class GameManager
 {
@@ -13,6 +14,11 @@ public partial class GameManager
     Text adCheckText;
     int adCheckTaps;
     float adCheckLastTap;
+    Transform adCheckRoot;
+    bool unlockForAdCheck;        // the password box is guarding the ad check
+    bool adCheckUnlocked;         // right password given this session
+
+    const string AdCheckPassword = "sozjyd-xacto5-mihqoW";
 
     void HookAdCheck(Text version)
     {
@@ -27,9 +33,40 @@ public partial class GameManager
             if (++adCheckTaps >= 5)
             {
                 adCheckTaps = 0;
-                OpenAdCheck(version.transform.parent.parent);
+                adCheckRoot = version.transform.parent.parent;
+                if (adCheckUnlocked) OpenAdCheck(adCheckRoot);
+                else AskAdCheckPassword();
             }
         });
+    }
+
+    /// <summary>The unlock-code box, asking for the ad check's password instead.</summary>
+    void AskAdCheckPassword()
+    {
+        if (unlockPanel == null) return;
+        unlockForAdCheck = true;
+        // masked, and no auto-capitals or autocorrect from the keyboard
+        unlockInput.inputType = InputField.InputType.Password;
+        unlockInput.characterLimit = 40;
+        OpenUnlockPrompt();
+        unlockPanel.transform.SetAsLastSibling();
+    }
+
+    void SubmitAdCheckPassword(string entered)
+    {
+        // Case is not held against you: a phone keyboard likes to capitalise
+        // the first letter on its own.
+        if (!string.Equals(entered, AdCheckPassword, System.StringComparison.OrdinalIgnoreCase))
+        {
+            unlockMsg.color = new Color(1f, 0.4f, 0.35f);
+            unlockMsg.text = "WRONG PASSWORD";
+            unlockInput.text = "";
+            audioMan.PlayTap();
+            return;
+        }
+        adCheckUnlocked = true;
+        CloseUnlockPrompt();
+        OpenAdCheck(adCheckRoot);
     }
 
     void OpenAdCheck(Transform uiRoot)

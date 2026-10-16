@@ -887,6 +887,7 @@ public partial class GameManager : MonoBehaviour
         RenderSettings.fogColor = daySkyColor;
         RenderSettings.fogStartDistance = fogStart;
         RenderSettings.fogEndDistance = fogEnd;
+        if (mainCam != null) mainCam.farClipPlane = Mathf.Max(150f, fogEnd + 25f);
 
         // the old hand-made menu is replaced by the runtime UI
         GameObject oldMenu = GameObject.Find("MainMenuPanel");
@@ -1844,16 +1845,19 @@ public partial class GameManager : MonoBehaviour
         {
             if (questProgress[i] < questTarget[i]) { allDone = false; break; }
         }
-        if (allDone)
-        {
-            questLevel = Mathf.Min(questLevel + 1, 29);
-            tires += 6;
-            FlashBonus(Loc.F("QUESTS DONE! X{0}  +6 TIRES", Mathf.Min(30, 1 + questLevel)),
-                new Color(0.6f, 0.9f, 1f));
-            audioMan.PlayCoin();
-            GenerateQuests();
-        }
+        if (allDone) CompleteQuestSet();
         SaveQuests();
+    }
+
+    /// <summary>All three quests done: the reward, and a fresh set.</summary>
+    void CompleteQuestSet()
+    {
+        questLevel = Mathf.Min(questLevel + 1, 29);
+        tires += 6;
+        FlashBonus(Loc.F("QUESTS DONE! X{0}  +6 TIRES", Mathf.Min(30, 1 + questLevel)),
+            new Color(0.6f, 0.9f, 1f));
+        audioMan.PlayCoin();
+        GenerateQuests();
     }
 
     // ------------------------------------------------- day -> night city
@@ -1930,6 +1934,10 @@ public partial class GameManager : MonoBehaviour
         RenderSettings.fogColor = sky;
         RenderSettings.fogStartDistance = Mathf.Lerp(Mathf.Lerp(fogStart, nightFogStart, t), snowFogStart, s);
         RenderSettings.fogEndDistance = Mathf.Lerp(Mathf.Lerp(fogEnd, nightFogEnd, t), snowFogEnd, s);
+        // Nothing past the fog's end can be seen - it is the sky colour - so
+        // the camera stops drawing there. The track is generated well beyond
+        // it, and this keeps all of that from costing anything.
+        if (mainCam != null) mainCam.farClipPlane = Mathf.Max(150f, RenderSettings.fogEndDistance + 25f);
         RenderSettings.ambientLight = Color.Lerp(
             Color.Lerp(ambientDay, new Color(0.10f, 0.11f, 0.20f), t),
             new Color(0.55f, 0.60f, 0.68f), s);
@@ -3607,6 +3615,8 @@ public partial class GameManager : MonoBehaviour
 
     void CloseUnlockPrompt()
     {
+        unlockForAdCheck = false;
+        unlockInput.inputType = InputField.InputType.Standard;
         unlockPanel.SetActive(false);
         audioMan.PlayTap();
     }
@@ -3614,6 +3624,13 @@ public partial class GameManager : MonoBehaviour
     void SubmitUnlock()
     {
         string entered = unlockInput.text.Trim();
+
+        // the same box guards the hidden ad check (GameManager.AdCheck.cs)
+        if (unlockForAdCheck)
+        {
+            SubmitAdCheckPassword(entered);
+            return;
+        }
 
         // the code that hands out the hidden car, and nothing else
         if (string.Equals(entered, DevCarPassword, System.StringComparison.OrdinalIgnoreCase))
@@ -3668,6 +3685,7 @@ public partial class GameManager : MonoBehaviour
         questsPanel.SetActive(true);
         questMultText.text = Loc.F("SCORE MULTIPLIER  X{0}", Mathf.Min(30, 1 + questLevel));
         for (int i = 0; i < 3; i++) questRowTexts[i].text = QuestLine(i);
+        RefreshQuestSkip();
         audioMan.PlayTap();
     }
 
@@ -6852,8 +6870,11 @@ public partial class GameManager : MonoBehaviour
             new Vector2(0.5f, 0.5f), new Vector2(0f, -410f), new Vector2(920f, 90f), true);
         qpHint.text = "COMPLETE ALL 3\n+1 MULTIPLIER   +6 TIRES";
         qpHint.color = new Color(1f, 1f, 1f, 0.9f);
+        questHint = qpHint;
         // inside the card (it ends at -645), under the hint
-        MakeCloseButton(questsPanel.transform, new Vector2(0f, -530f), CloseQuests);
+        MakeCloseButton(questsPanel.transform, new Vector2(0f, -565f), CloseQuests);
+        // two done, one to go: finish it with an ad or 5 tires
+        BuildQuestSkip(questsPanel.transform);
 
         // --- shop (tires for money, mystery boxes for coins)
         shopPanel = MakePanel(uiRoot, "ShopPanel");

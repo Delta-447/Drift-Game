@@ -16,7 +16,11 @@ public class TrackGenerator : MonoBehaviour
 
     [Header("Road")]
     public float roadWidth = 11f;
-    public float aheadDistance = 320f;
+    // Far enough that new road and scenery appear inside the fog. At 320 a
+    // winding stretch could bring the generation point back within sight,
+    // and trees there popped into view. (The camera stops drawing at the
+    // fog's edge, so what is built out there costs nothing to render.)
+    public float aheadDistance = 480f;
 
     [Tooltip("Above 1 the corners come tighter and hold for longer.")]
     public float curveTightness = 1f;
@@ -31,6 +35,7 @@ public class TrackGenerator : MonoBehaviour
     readonly List<TrailPoint> trail = new List<TrailPoint>();
     const float TrailSpacing = 5f;
     const float TrailMemory = 1600f;
+    const float RaceRiseSlope = 0.0015f;
     float nextTrailAt;
 
     // Where the road actually is, bucketed by position. RoadClearCoarse walks
@@ -569,6 +574,8 @@ public class TrackGenerator : MonoBehaviour
         /// <summary>What it covers, for deciding whether new road runs through it.</summary>
         public Bounds bounds;
         public bool hasBounds;
+        /// <summary>For one sprawling mesh (a grass patch): a sample of where it actually is.</summary>
+        public Vector3[] points;
     }
 
     class CoinData
@@ -646,6 +653,10 @@ public class TrackGenerator : MonoBehaviour
     Material buildingMatA, buildingMatB, windowMat, neonPink, neonCyan, neonAmber, poleMat;
     Material magnetRedMat, magnetBlueMat, snowMat, rockMat, iceMat;
     Material barrierMat, stripeMat, logMat, oilMat, trunkMat;
+    Material oilSpillMat;       // the slick itself: pitch black
+    Material toxicSpillMat;     // the city's neon green spills
+    Mesh oilBlobMesh;
+    const float ToxicSpillChance = 0.4f;   // share of city spills that are neon green
     Material leafMatA, leafMatB, leafMatC, autumnMat;
     GameObject ground;
 
@@ -661,6 +672,7 @@ public class TrackGenerator : MonoBehaviour
                      float dayNightBlend = 0f, float snowAmount = 0f)
     {
         fixedDepth = 0;
+        lastInitTime = Time.unscaledTime;    // the opening stretch appears at once, behind a fade
         FixedIn();
         try { InitTrack(origin, startHeadingDeg, dayNightBlend, snowAmount); }
         finally { FixedOut(); }
@@ -774,9 +786,16 @@ public class TrackGenerator : MonoBehaviour
         postMatB = new Material(shader) { color = postColorB };
         groundMat = new Material(shader) { color = groundColor };
         barrierMat = new Material(shader) { color = barrierColor };
-        stripeMat = new Material(shader) { color = Color.white };
+        // Not pure white, and matte: glossy white paint under a strong sun
+        // went past the bloom threshold and the road markings glowed as
+        // bright white lines.
+        stripeMat = new Material(shader) { color = new Color(0.9f, 0.9f, 0.88f) };
+        if (stripeMat.HasProperty("_Smoothness")) stripeMat.SetFloat("_Smoothness", 0.12f);
         logMat = new Material(shader) { color = logColor };
         oilMat = new Material(shader) { color = oilColor };
+        oilSpillMat = MakeOilSpillMaterial(shader);
+        toxicSpillMat = MakeGlowMat(shader, new Color(0.3f, 1f, 0.15f), 1.8f);
+        if (toxicSpillMat.HasProperty("_Smoothness")) toxicSpillMat.SetFloat("_Smoothness", 0.6f);
         trunkMat = new Material(shader) { color = trunkColor };
         cloudMat = new Material(shader) { color = new Color(0.98f, 0.98f, 1f) };
         coinMat = new Material(shader) { color = new Color(1f, 0.82f, 0.1f) };
@@ -874,7 +893,17 @@ public class TrackGenerator : MonoBehaviour
             // The mountain is a CLIMB. Every stretch goes up; the only variety
             // is how steeply, with the occasional near-flat shelf to breathe.
             // Races stay level - see flatTrack.
-            if (flatTrack || frontDistance < flatUntil)
+            if (flatTrack)
+            {
+                // Level to the eye, but rising a hair - 1.5 m per kilometre.
+                // A tight circuit can come back across road it laid earlier,
+                // and two roads at exactly the same height fight over which
+                // one shows: the old road's white lines flickered through as
+                // bright stripes across the track. This keeps every crossing
+                // a few tens of centimetres above the road beneath it.
+                targetSlope = RaceRiseSlope;
+            }
+            else if (frontDistance < flatUntil)
             {
                 targetSlope = 0f;
             }
@@ -3210,19 +3239,155 @@ public class TrackGenerator : MonoBehaviour
                 if (!FindOpenLane(dist, data.halfWidth, 9f, out data.lateral))
                 { Object.Destroy(rootGo); return; }
 
-                Vector3 basePos = pos + right * data.lateral + Vector3.up * 0.04f;
-                // black oil in the forest and city, pale ice on the mountain
-                Material slick = biome == Biome.SnowMountains ? iceMat : oilMat;
-                MakePart(PrimitiveType.Cylinder, rootGo.transform, slick,
-                    basePos, Quaternion.identity, new Vector3(3.8f, 0.02f, 3.8f));
-                MakePart(PrimitiveType.Cylinder, rootGo.transform, slick,
-                    basePos + fwd * 1.4f + right * 0.9f, Quaternion.identity,
-                    new Vector3(1.6f, 0.02f, 1.6f));
+                Vector3 basePos = pos + right * data.lateral + Vector3.up * 0.045f;
+                if (biome == Biome.SnowMountains)
+                {
+                    // pale ice on the mountain
+                    MakePart(PrimitiveType.Cylinder, rootGo.transform, iceMat,
+                        basePos, Quaternion.identity, new Vector3(3.8f, 0.02f, 3.8f));
+                    MakePart(PrimitiveType.Cylinder, rootGo.transform, iceMat,
+                        basePos + fwd * 1.4f + right * 0.9f, Quaternion.identity,
+                        new Vector3(1.6f, 0.02f, 1.6f));
+                }
+                else
+                {
+                    // pitch black, with a smaller splash running off it - and
+                    // in the city, some of it is glowing neon green
+                    Material mat = biome == Biome.NightCity && Random.value < ToxicSpillChance
+                        ? toxicSpillMat : oilSpillMat;
+                    float yaw = Random.Range(0f, 360f);
+                    MakeOilBlob(rootGo.transform, mat, basePos, 4.2f, yaw);
+                    MakeOilBlob(rootGo.transform, mat, basePos + fwd * 1.7f + right * 1.0f + Vector3.up * 0.004f,
+                        1.8f, yaw + 140f);
+                }
                 break;
             }
         }
 
         obstacles.Add(data);
+    }
+
+    // ------------------------------------------------------------ oil spills
+
+    /// <summary>
+    /// The slick: true black with thin rainbow bands. Drawn UNLIT: a lit
+    /// black surface still picks up a faint sheen from the sky and the sun,
+    /// and on a phone screen that faint sheen reads as dark grey - the same
+    /// grey as a tree's shadow on the road, which is why testers could not
+    /// tell them apart. Unlit, the black is exactly black.
+    /// </summary>
+    static Material MakeOilSpillMaterial(Shader litShader)
+    {
+        Texture2D bands = MakeOilSheenTexture(256);
+        // Sprites/Default is always in the build (Graphics settings) and
+        // ignores lighting; the skid marks use it too.
+        Shader unlit = Shader.Find("Sprites/Default");
+        if (unlit != null)
+        {
+            var u = new Material(unlit) { color = Color.white };
+            u.mainTexture = bands;
+            return u;
+        }
+        // fallback: as black as a lit surface gets
+        var m = new Material(litShader) { color = Color.black };
+        if (m.HasProperty("_Smoothness")) m.SetFloat("_Smoothness", 0f);
+        if (m.HasProperty("_EmissionColor"))
+        {
+            m.EnableKeyword("_EMISSION");
+            if (m.HasProperty("_EmissionMap")) m.SetTexture("_EmissionMap", bands);
+            m.SetColor("_EmissionColor", Color.white);
+        }
+        return m;
+    }
+
+    const float OilBandBrightness = 0.75f;   // how bright the rainbow bands are
+
+    /// <summary>
+    /// Rainbow bands on pure black. Each smaller mip level - what the GPU
+    /// uses for a spill further away - has the bands dimmer, so a distant
+    /// spill reads as solid black instead of a blur of colour.
+    /// </summary>
+    static Texture2D MakeOilSheenTexture(int n)
+    {
+        var tex = new Texture2D(n, n, TextureFormat.RGBA32, true);
+        tex.wrapMode = TextureWrapMode.Clamp;
+        tex.filterMode = FilterMode.Trilinear;
+        for (int mip = 0; mip < tex.mipmapCount; mip++)
+        {
+            int size = Mathf.Max(1, n >> mip);
+            float fade = OilBandBrightness * Mathf.Clamp01(1f - mip * 0.22f);
+            var px = new Color32[size * size];
+            for (int yi = 0; yi < size; yi++)
+            {
+                for (int xi = 0; xi < size; xi++)
+                {
+                    float x = size > 1 ? xi / (size - 1f) : 0.5f;
+                    float y = size > 1 ? yi / (size - 1f) : 0.5f;
+                    float dx = x - 0.5f, dy = y - 0.5f;
+                    float r = Mathf.Sqrt(dx * dx + dy * dy) * 2f;
+                    float n1 = Mathf.PerlinNoise(x * 4f + 3.1f, y * 4f + 7.7f);
+                    float n2 = Mathf.PerlinNoise(x * 2.5f + 11.3f, y * 2.5f + 2.9f);
+                    float t = r * 4.2f + n1 * 1.8f;
+                    float hue = Mathf.Repeat(t * 0.37f + n2 * 0.6f, 1f);
+                    float band = Mathf.Pow(Mathf.Abs(Mathf.Sin(t * Mathf.PI)), 3f);
+                    float patch = Mathf.Clamp01((n2 - 0.18f) / 0.5f);
+                    float sheen = band * patch * Mathf.Clamp01(1.25f - r) * fade;
+                    Color c = Color.HSVToRGB(hue, 0.55f, 1f) * sheen;
+                    c.a = 1f;
+                    px[yi * size + xi] = (Color32)c;
+                }
+            }
+            tex.SetPixels32(px, mip);
+        }
+        tex.Apply(false, true);
+        return tex;
+    }
+
+    /// <summary>A flat, irregular puddle shape (unit size), mapped so the sheen texture covers it.</summary>
+    static Mesh MakeOilBlobMesh()
+    {
+        const int Rim = 32;
+        var verts = new Vector3[Rim + 1];
+        var uvs = new Vector2[Rim + 1];
+        var tris = new int[Rim * 3];
+        verts[0] = Vector3.zero;
+        uvs[0] = new Vector2(0.5f, 0.5f);
+        for (int i = 0; i < Rim; i++)
+        {
+            float a = i / (float)Rim * Mathf.PI * 2f;
+            float rr = 0.5f * (0.86f + 0.16f * Mathf.Sin(a * 3f + 1f) + 0.08f * Mathf.Sin(a * 5f + 2.3f));
+            Vector3 v = new Vector3(Mathf.Cos(a) * rr, 0f, Mathf.Sin(a) * rr);
+            verts[i + 1] = v;
+            uvs[i + 1] = new Vector2(v.x + 0.5f, v.z + 0.5f);
+            tris[i * 3] = 0;
+            tris[i * 3 + 1] = 1 + (i + 1) % Rim;
+            tris[i * 3 + 2] = 1 + i;
+        }
+        var cols = new Color32[Rim + 1];
+        for (int i = 0; i < cols.Length; i++) cols[i] = new Color32(255, 255, 255, 255);
+        var mesh = new Mesh { name = "OilBlob" };
+        mesh.vertices = verts;
+        mesh.uv = uvs;
+        mesh.colors32 = cols;
+        mesh.triangles = tris;
+        mesh.RecalculateNormals();
+        mesh.RecalculateBounds();
+        return mesh;
+    }
+
+    GameObject MakeOilBlob(Transform parent, Material mat, Vector3 worldPos, float size, float yaw)
+    {
+        if (oilBlobMesh == null) oilBlobMesh = MakeOilBlobMesh();
+        var go = new GameObject("OilSlick");
+        go.transform.SetParent(parent, false);
+        go.transform.position = worldPos;
+        go.transform.rotation = Quaternion.Euler(0f, yaw, 0f);
+        go.transform.localScale = new Vector3(size, 1f, size);
+        go.AddComponent<MeshFilter>().sharedMesh = oilBlobMesh;
+        var mr = go.AddComponent<MeshRenderer>();
+        mr.sharedMaterial = mat;
+        mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+        return go;
     }
 
     GameObject MakePart(PrimitiveType prim, Transform parent, Material mat,
@@ -3594,6 +3759,22 @@ public class TrackGenerator : MonoBehaviour
             c.bounds = new Bounds(go.transform.position, Vector3.one);
         }
         c.hasBounds = true;
+
+        // A grass patch is one mesh along a hundred metres of curving verge,
+        // so its box takes in a lot of ground it does not cover. Keep a
+        // sample of its real vertices to judge new road against.
+        if (c.bounds.size.magnitude > 30f)
+        {
+            var mf = go.GetComponent<MeshFilter>();
+            if (mf != null && mf.sharedMesh != null && mf.sharedMesh.isReadable)
+            {
+                Vector3[] v = mf.sharedMesh.vertices;
+                int step = Mathf.Max(1, v.Length / 240);
+                var pts = new List<Vector3>(v.Length / step + 1);
+                for (int i = 0; i < v.Length; i += step) pts.Add(go.transform.TransformPoint(v[i]));
+                c.points = pts.ToArray();
+            }
+        }
         decorations.Add(c);
 
         int cx0 = Mathf.FloorToInt(c.bounds.min.x / DecoCell);
@@ -3664,6 +3845,9 @@ public class TrackGenerator : MonoBehaviour
                         if (Mathf.Abs(c.bounds.center.y - roadPos.y) > 9f + c.bounds.extents.y) continue;
                         Vector3 flat = new Vector3(roadPos.x, c.bounds.center.y, roadPos.z);
                         if (c.bounds.SqrDistance(flat) > sq) continue;
+                        // inside the box is not the same as on the grass:
+                        // only a patch the road really runs over goes
+                        if (c.points != null && !AnyPointNear(c.points, roadPos, sq)) continue;
                     }
                     else
                     {
@@ -3682,7 +3866,8 @@ public class TrackGenerator : MonoBehaviour
     }
 
     /// <summary>How much further back than the cutoff something may linger while still in view.</summary>
-    const float ViewKeepExtra = 350f;
+    const float ViewKeepExtra = 650f;
+    float lastInitTime = -10f;
     Camera pruneCam;
 
     /// <summary>
@@ -3707,6 +3892,18 @@ public class TrackGenerator : MonoBehaviour
             if (c.go != null) Object.Destroy(c.go);
             list.RemoveAt(i);
         }
+    }
+
+    static bool AnyPointNear(Vector3[] pts, Vector3 p, float sq)
+    {
+        for (int i = 0; i < pts.Length; i++)
+        {
+            Vector3 d = pts[i] - p;
+            if (Mathf.Abs(d.y) > 9f) continue;
+            d.y = 0f;
+            if (d.sqrMagnitude < sq) return true;
+        }
+        return false;
     }
 
     static bool StillInView(Chunk c, Camera cam, float far)

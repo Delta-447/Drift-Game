@@ -301,3 +301,4 @@ CONTACT		CONTACTO	CONTATO	CONTACT	KONTAKT	КОНТАКТЫ	联系我们	お問�
 GET IN TOUCH		CONTÁCTANOS	FALE CONOSCO	NOUS CONTACTER	SCHREIB UNS	СВЯЖИСЬ С НАМИ	联系我们	ご連絡はこちら	연락하기	تواصل معنا	हमसे संपर्क करें
 WEBSITE		SITIO WEB	SITE	SITE WEB	WEBSITE	САЙТ	网站	ウェブサイト	웹사이트	الموقع	वेबसाइट
 EMAIL		CORREO	E-MAIL	E-MAIL	E-MAIL	ПОЧТА	邮箱	メール	이메일	البريد	ईमेल
+FINISH THE LAST QUEST NOW		TERMINA YA LA ÚLTIMA MISIÓN	TERMINE A ÚLTIMA MISSÃO AGORA	FINIS LA DERNIÈRE QUÊTE	LETZTE AUFGABE JETZT ABSCHLIESSEN	ЗАВЕРШИТЬ ПОСЛЕДНЕЕ ЗАДАНИЕ	立即完成最后一个任务	最後のクエストを今すぐ達成	마지막 퀘스트 바로 완료	أكمل المهمة الأخيرة الآن	आखिरी मिशन अभी पूरा करें

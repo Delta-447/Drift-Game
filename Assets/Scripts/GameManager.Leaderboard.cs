@@ -51,6 +51,14 @@ public partial class GameManager
     // a week's best this many times 2nd place locks 1st in
     const float LockInFactor = 3f;
 
+    // From Silver up, the field fights back: whenever the player climbs past
+    // someone, the rival now right behind answers - this often - as long as
+    // the score it needs is within this much of where it started the week.
+    // A run far enough clear of the board still gets away.
+    const int FightBackFromLeague = 2;   // SILVER
+    const float FightBackChance = 0.9f;
+    static readonly float[] FightBackReach = { 0f, 0f, 0.45f, 0.55f, 0.65f, 0.75f };
+
     // prizes, by league
     static readonly int[] ThirdPlaceCoins = { 150, 250, 400, 600, 900, 1300 };
     static readonly int[] FirstPlaceSpins = { 1, 2, 0, 0, 0, 0 };
@@ -397,6 +405,7 @@ public partial class GameManager
         System.Array.Copy(lbScores, lbPrevScores, LbBots);
         bool improved = finalScore > lbWeekBest;
         lbRunOldScore = lbWeekBest;
+        int rankBefore = LbRankOf(lbWeekBest);
         if (improved)
         {
             lbWeekBest = finalScore;
@@ -415,7 +424,8 @@ public partial class GameManager
             }
             else
             {
-                LbRivalsAnswer();
+                bool climbed = improved && LbRankOf(lbWeekBest) < rankBefore;
+                LbRivalsAnswer(climbed);
                 LbRivalsTrain();
             }
         }
@@ -431,7 +441,7 @@ public partial class GameManager
     /// The rival just behind the player edges past them - by a hair, and only
     /// if it has that score in it this week.
     /// </summary>
-    void LbRivalsAnswer()
+    void LbRivalsAnswer(bool playerClimbed)
     {
         int chaser = -1, above = int.MaxValue;
         for (int i = 0; i < LbBots; i++)
@@ -445,7 +455,16 @@ public partial class GameManager
         int target = Mathf.CeilToInt(lbWeekBest * (1f + Random.Range(0.004f, 0.02f))) + 1;
         // it squeezes in just ahead of the player, not past whoever is next
         if (above != int.MaxValue) target = Mathf.Min(target, Mathf.Max(lbWeekBest, above - 1));
-        if (target > lbReach[chaser]) return;   // the player has got away from it
+        bool fightBack = playerClimbed && lbLeague >= FightBackFromLeague
+                         && Random.value < FightBackChance;
+        int reach = lbReach[chaser];
+        if (fightBack)
+        {
+            int far = Mathf.RoundToInt(lbBaseScores[chaser] * (1f + FightBackReach[lbLeague]));
+            reach = Mathf.Max(reach, far);
+        }
+        if (target > reach) return;   // the player has got away from it
+        if (target > lbReach[chaser]) lbReach[chaser] = target;
 
         lbOvertakerFrom = lbScores[chaser];
         lbScores[chaser] = target;

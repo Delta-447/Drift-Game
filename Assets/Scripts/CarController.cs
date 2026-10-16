@@ -1921,10 +1921,10 @@ public class CarController : MonoBehaviour
         spinTimer = spinDuration;
         spinDir = Random.value < 0.5f ? -1f : 1f;
         LateralVelocity = Mathf.Clamp(LateralVelocity + spinDir * 6f, -maxLateralSpeed, maxLateralSpeed);
-        // Floored below the starting speed, not at it. Flooring at baseSpeed
-        // meant oil cost nothing early in a run - and could even hand speed
-        // back - because the car has barely climbed above it by then.
-        CurrentSpeed = Mathf.Max(baseSpeed * 0.8f, CurrentSpeed * spinSpeedPenalty);
+        // The spin is the whole penalty: the car keeps the speed it had.
+        // Cutting it here also stuck in a race for good - a race has no speed
+        // ramp, so nothing ever brought the car back up to pace.
+        // (spinSpeedPenalty is no longer used.)
     }
 
     // ------------------------------------------------------------------ input
