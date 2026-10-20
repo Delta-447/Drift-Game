@@ -472,7 +472,7 @@ public partial class GameManager
             if (raceSwitchT < RaceSwitchOut)
             {
                 float t = raceSwitchT / RaceSwitchOut;
-                raceCard.anchoredPosition = new Vector2(-raceSwitchDir * 900f * t * t, 0f);
+                raceCard.anchoredPosition = new Vector2(-raceSwitchDir * 900f * UiWidthScale() * t * t, 0f);
                 raceFade.color = new Color(0f, 0f, 0f, t);
             }
             else
@@ -487,7 +487,7 @@ public partial class GameManager
                 }
                 float t = Mathf.Clamp01((raceSwitchT - RaceSwitchOut) / RaceSwitchIn);
                 float e = 1f - Mathf.Pow(1f - t, 3f);
-                raceCard.anchoredPosition = new Vector2(raceSwitchDir * 900f * (1f - e), 0f);
+                raceCard.anchoredPosition = new Vector2(raceSwitchDir * 900f * UiWidthScale() * (1f - e), 0f);
                 raceFade.color = new Color(0f, 0f, 0f, 1f - e);
                 if (t >= 1f)
                 {

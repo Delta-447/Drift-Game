@@ -140,7 +140,7 @@ public partial class GameManager
         if (outP > 0f)
         {
             float e = outP * outP;
-            finishPlaceRt.anchoredPosition = new Vector2(Mathf.Lerp(0f, -1100f, e), 0f);
+            finishPlaceRt.anchoredPosition = new Vector2(Mathf.Lerp(0f, -1100f * UiWidthScale(), e), 0f);
             float fade = 1f - outP;
             finishPlaceText.color = new Color(1f, 0.82f, 0.12f, fade);
             finishPlaceSuffix.color = new Color(1f, 0.82f, 0.12f, fade);

@@ -2737,44 +2737,16 @@ public partial class GameManager : MonoBehaviour
     }
 
     /// <summary>
-    /// Chooses the slice. Mostly a straight weighted draw, but every few spins
-    /// it is steered onto a neighbour of the jackpot so the wheel visibly stops
-    /// a hair away from the car.
+    /// Chooses the slice: a straight weighted draw on the slice weights, every
+    /// spin, nothing steered. Those weights are exactly what the ODDS screen
+    /// shows, so they must stay the only thing that decides the prize.
     /// </summary>
     /// <param name="frac">
-    /// Where inside the slice to stop, 0 to 1. Never dead centre, and on a
-    /// teased spin it stops hard against the jackpot's edge.
+    /// Where inside the slice to stop, 0 to 1. Never dead centre, never on a
+    /// seam, so the pointer always reads clearly as the prize won.
     /// </param>
     int PickWheelSlot(out float frac)
     {
-        int spun = PlayerPrefs.GetInt("SpinsSinceTease", 0) + 1;
-        int teaseAt = PlayerPrefs.GetInt("SpinTeaseAt", 0);
-        if (teaseAt <= 0) teaseAt = Random.Range(4, 7);
-
-        int carSlot = -1;
-        for (int i = 0; i < Wheel.Length; i++)
-        {
-            if (Wheel[i].kind == SpinPrize.Car) { carSlot = i; break; }
-        }
-
-        if (spun >= teaseAt && carSlot >= 0)
-        {
-            PlayerPrefs.SetInt("SpinsSinceTease", 0);
-            PlayerPrefs.SetInt("SpinTeaseAt", Random.Range(4, 7));
-            PlayerPrefs.Save();
-
-            // land on a neighbour, right up against the shared edge, so the
-            // pointer sits a hair outside the jackpot
-            int step = Random.value < 0.5f ? -1 : 1;
-            frac = step == -1 ? Random.Range(0.90f, 0.975f)
-                              : Random.Range(0.025f, 0.10f);
-            return (carSlot + step + Wheel.Length) % Wheel.Length;
-        }
-
-        PlayerPrefs.SetInt("SpinsSinceTease", spun);
-        PlayerPrefs.SetInt("SpinTeaseAt", teaseAt);
-        PlayerPrefs.Save();
-
         // anywhere in the slice except the very middle and the seams
         frac = Random.value < 0.5f ? Random.Range(0.14f, 0.40f)
                                    : Random.Range(0.60f, 0.86f);
@@ -2865,18 +2837,18 @@ public partial class GameManager : MonoBehaviour
 
             default:
             {
-                int car = PickJackpotCar();
+                int car = PickWheelCar();
                 if (car < 0)
                 {
                     // every coin car already owned - pay out instead
-                    totalCoins += 25000;
+                    totalCoins += WheelCarCoins;
                     PlayerPrefs.SetInt("Coins", totalCoins);
-                    msg = "JACKPOT!  +25000 COINS";
+                    msg = Loc.F("BONUS!  +{0} COINS", WheelCarCoins);
                 }
                 else
                 {
                     PlayerPrefs.SetInt("CarOwned" + car, 1);
-                    msg = Loc.F("JACKPOT!  {0}", Cars[car].name);
+                    msg = Loc.F("NEW CAR!  {0}", Cars[car].name);
                 }
                 break;
             }
@@ -2890,8 +2862,11 @@ public partial class GameManager : MonoBehaviour
         ShowPrizeReveal(msg, s.kind == SpinPrize.Tokens, WheelIconPath(s));
     }
 
+    /// <summary>What the CAR slice pays once every coin car is in the garage.</summary>
+    const int WheelCarCoins = 25000;
+
     /// <summary>A coin-priced car the player does not own yet.</summary>
-    int PickJackpotCar()
+    int PickWheelCar()
     {
         var pool = new List<int>();
         for (int i = 0; i < Cars.Length; i++)
@@ -3074,6 +3049,10 @@ public partial class GameManager : MonoBehaviour
             new Vector2(0f, -390f), new Vector2(520f, 124f), SpinWheel,
             new Color(0.55f, 0.30f, 0.85f));
 
+        // the chance of every slice, there before a spin is ever bought
+        MakeOddsButton(wheelPanel.transform, new Vector2(385f, -390f),
+            new Vector2(200f, 96f), OddsFor.Wheel);
+
         // two ways to get another go, side by side
         var buyLabel = MakeButton(wheelPanel.transform, "+1  " + SpinTireCost, 34,
             new Vector2(-140f, -520f), new Vector2(260f, 104f), BuySpinWithTires,
@@ -3237,7 +3216,7 @@ public partial class GameManager : MonoBehaviour
         // the position slides in once the screen is dark
         float p = Mathf.Clamp01((finishAnimT - 0.3f) / 0.45f);
         float eased = 1f - Mathf.Pow(1f - p, 3f);
-        finishPlaceRt.anchoredPosition = new Vector2(Mathf.Lerp(900f, 0f, eased), 0f);
+        finishPlaceRt.anchoredPosition = new Vector2(Mathf.Lerp(900f * UiWidthScale(), 0f, eased), 0f);
         finishPlaceRt.localScale = Vector3.one * Mathf.Lerp(1.35f, 1f, eased);
         float a = Mathf.Clamp01(p * 2f);
         finishPlaceText.color = new Color(1f, 0.82f, 0.12f, a);
@@ -4078,53 +4057,30 @@ public partial class GameManager : MonoBehaviour
         pendingBoxCurrency = Currency.Coins;
         pendingBoxTires = false;
 
-        // rarity table - TODO: add car skins as prizes when new skins exist
-        float roll = Random.value;
-        if (roll < 0.40f)
+        // one draw on the prize table - the same table the ODDS screen shows
+        BoxTier tier = MysteryBoxTiers[PickBoxTier(MysteryBoxTiers)];
+        int amount = Random.Range(tier.min, tier.max + 1);
+        pendingBoxColor = tier.color;
+        switch (tier.kind)
         {
-            int c = Random.Range(200, 451);
-            totalCoins += c;
-            pendingBoxText = Loc.F("+{0} COINS", c);
-            pendingBoxColor = new Color(1f, 0.82f, 0.1f);
-        }
-        else if (roll < 0.70f)
-        {
-            int c = Random.Range(500, 901);
-            totalCoins += c;
-            pendingBoxText = Loc.F("+{0} COINS!", c);
-            pendingBoxColor = new Color(1f, 0.82f, 0.1f);
-        }
-        else if (roll < 0.85f)
-        {
-            int t = Random.Range(1, 4);
-            tires += t;
-            pendingBoxText = Loc.F("+{0} TIRES!", t);
-            pendingBoxTires = true;
-            pendingBoxColor = new Color(0.7f, 0.9f, 1f);
-        }
-        else if (roll < 0.95f)
-        {
-            int c = Random.Range(1200, 2001);
-            totalCoins += c;
-            pendingBoxText = Loc.F("RARE!  +{0} COINS!", c);
-            pendingBoxColor = new Color(0.8f, 0.4f, 1f);
-        }
-        else if (roll < 0.98f)
-        {
-            int t = Random.Range(5, 9);
-            tires += t;
-            pendingBoxText = Loc.F("JACKPOT!  +{0} TIRES!", t);
-            pendingBoxTires = true;
-            pendingBoxColor = new Color(0.35f, 1f, 0.45f);
-        }
-        else
-        {
-            // rarest prize: brand tokens for the exotic cars
-            pendingBoxCurrency = (Currency)Random.Range(1, 5);
-            int amount = Random.Range(1, 6);
-            SetToken(pendingBoxCurrency, GetToken(pendingBoxCurrency) + amount);
-            pendingBoxText = Loc.F("+{0} {1}!", amount, Loc.T(TokenNames[(int)pendingBoxCurrency]));
-            pendingBoxColor = TokenColors[(int)pendingBoxCurrency];
+            case BoxPrizeKind.Coins:
+                totalCoins += amount;
+                pendingBoxText = Loc.F(tier.textKey, amount);
+                break;
+
+            case BoxPrizeKind.Tires:
+                tires += amount;
+                pendingBoxText = Loc.F(tier.textKey, amount);
+                pendingBoxTires = true;
+                break;
+
+            default:
+                // rarest prize: brand tokens for the exotic cars, any marque
+                pendingBoxCurrency = (Currency)Random.Range(1, 5);
+                SetToken(pendingBoxCurrency, GetToken(pendingBoxCurrency) + amount);
+                pendingBoxText = Loc.F(tier.textKey, amount, Loc.T(TokenNames[(int)pendingBoxCurrency]));
+                pendingBoxColor = TokenColors[(int)pendingBoxCurrency];
+                break;
         }
 
         PlayerPrefs.SetInt("Coins", totalCoins);
@@ -4478,21 +4434,11 @@ public partial class GameManager : MonoBehaviour
         shopShowcaseRoot.SetActive(true);
 
         // a brand token, 1-5, weighted toward the cheaper marques - but only
-        // from the marques that still have a car left to buy
-        var pool = new List<Currency>();
-        var weights = new List<float>();
-        void Consider(Currency c, float w)
-        {
-            if (!TokenStillUseful(c)) return;
-            pool.Add(c);
-            weights.Add(w);
-        }
-        Consider(Currency.Caldera, 34f);
-        Consider(Currency.Cyber, 30f);
-        Consider(Currency.Tempasta, 23f);
-        Consider(Currency.Vettura, 13f);
+        // from the marques that still have a car left to buy. The same pool
+        // the ODDS screen lists.
+        TokenBoxPool(out List<Currency> pool, out List<float> weights);
 
-        int amount = Random.Range(1, 6);
+        int amount = Random.Range(TokenBoxMin, TokenBoxMax + 1);
         Currency cur = Currency.Coins;
         if (pool.Count > 0)
         {
@@ -6298,6 +6244,39 @@ public partial class GameManager : MonoBehaviour
 
     // ---------------------------------------------------------------- UI build
 
+    /// <summary>
+    /// The UI is laid out on a 1080-wide portrait screen, and every screen
+    /// needs about 2160 of height to breathe: phones from the iPhone X on are
+    /// that tall or taller once they are 1080 wide, which is what it was tuned
+    /// on. Fitting the width alone left wider screens short - an iPad came out
+    /// only 1440 tall, so screens were cut off top and bottom and the corner
+    /// counters sat on top of titles. Expand fits the whole 1080 x 2160 on
+    /// every screen: tall phones are exactly as before (width decides), and
+    /// iPads and 16:9 phones get the full height with extra room at the sides.
+    /// </summary>
+    public static void ApplyUiScaling(CanvasScaler scaler)
+    {
+        scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
+        scaler.referenceResolution = new Vector2(1080f, UiLayoutHeight);
+        scaler.screenMatchMode = CanvasScaler.ScreenMatchMode.Expand;
+    }
+
+    /// <summary>The height every screen is laid out to fit in.</summary>
+    public const float UiLayoutHeight = 2160f;
+
+    RectTransform uiCanvasRt;
+
+    /// <summary>
+    /// How much wider the UI is than the 1080 it was laid out at: 1 on a phone,
+    /// about 1.5 on an iPad. Anything that slides off the side of the screen
+    /// travels this much further, so it really does leave a wide screen.
+    /// </summary>
+    float UiWidthScale()
+    {
+        if (uiCanvasRt == null) return 1f;
+        return Mathf.Max(1f, uiCanvasRt.rect.width / 1080f);
+    }
+
     void BuildUi()
     {
         // drop any TTF at Assets/Resources/Fonts/GameFont.ttf and every text
@@ -6313,11 +6292,8 @@ public partial class GameManager : MonoBehaviour
         canvas.renderMode = RenderMode.ScreenSpaceOverlay;
         canvas.sortingOrder = 100;
         var scaler = canvasGo.AddComponent<CanvasScaler>();
-        scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
-        scaler.referenceResolution = new Vector2(1080f, 1920f);
-        // match width: on narrow screens (e.g. 860x1862) the UI scales to fit
-        // horizontally and gains breathing room vertically instead of clipping
-        scaler.matchWidthOrHeight = 0f;
+        uiCanvasRt = (RectTransform)canvasGo.transform;
+        ApplyUiScaling(scaler);
 
         // everything lives inside the device safe area (iPhone notch etc.)
         var safeGo = new GameObject("SafeArea");
@@ -6904,6 +6880,10 @@ public partial class GameManager : MonoBehaviour
         tbRt.anchoredPosition = new Vector2(0f, 285f);
         tbRt.sizeDelta = new Vector2(290f, 290f);
 
+        // what's inside, and how likely - beside the box, before buying it
+        MakeOddsButton(shopScroll, new Vector2(335f, 285f), new Vector2(220f, 92f),
+            OddsFor.MysteryBox);
+
         var boxBtnLabel = MakeButton(shopScroll, Loc.F("OPEN BOX  {0}", MysteryBoxCost), 48,
             new Vector2(0f, 90f), new Vector2(700f, 116f), BuyMysteryBox, null, true);
         IconAfterText(MakeCurrencyIcon(boxBtnLabel.transform.parent, new Vector2(0.5f, 0.5f),
@@ -6925,6 +6905,9 @@ public partial class GameManager : MonoBehaviour
         tb2Rt.anchorMin = tb2Rt.anchorMax = tb2Rt.pivot = new Vector2(0.5f, 0.5f);
         tb2Rt.anchoredPosition = new Vector2(0f, -265f);
         tb2Rt.sizeDelta = new Vector2(255f, 255f);
+
+        MakeOddsButton(shopScroll, new Vector2(335f, -265f), new Vector2(220f, 92f),
+            OddsFor.TokenBox);
 
         var tokBtn = MakeButton(shopScroll, Loc.F("OPEN  {0}", TokenBoxTireCost), 48,
             new Vector2(0f, -430f), new Vector2(700f, 116f), BuyTokenBox,

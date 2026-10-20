@@ -119,9 +119,7 @@ public class TitleIntro : MonoBehaviour
             es.AddComponent<UnityEngine.EventSystems.StandaloneInputModule>();
         }
         var scaler = canvasGo.AddComponent<CanvasScaler>();
-        scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
-        scaler.referenceResolution = new Vector2(1080f, 1920f);
-        scaler.matchWidthOrHeight = 0f;        // match the game's UI scaling
+        GameManager.ApplyUiScaling(scaler);    // match the game's UI scaling
 
         var go = new GameObject("TitleIntro");
         go.transform.SetParent(canvasGo.transform, false);

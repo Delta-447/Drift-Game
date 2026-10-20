@@ -1021,7 +1021,8 @@ public partial class GameManager
         float p = Mathf.Clamp01((t - 0.3f) / 0.45f);
         float eased = 1f - Mathf.Pow(1f - p, 3f);
         float leave = 1f - open;
-        coachDoneTextRt.anchoredPosition = new Vector2(Mathf.Lerp(900f, 0f, eased) - 900f * leave * leave, 60f);
+        float slide = 900f * UiWidthScale();
+        coachDoneTextRt.anchoredPosition = new Vector2(Mathf.Lerp(slide, 0f, eased) - slide * leave * leave, 60f);
         coachDoneTextRt.localScale = Vector3.one * Mathf.Lerp(1.35f, 1f, eased);
         coachDoneText.color = new Color(1f, 0.82f, 0.12f, Mathf.Clamp01(p * 2f) * open);
 
