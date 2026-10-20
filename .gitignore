@@ -72,3 +72,14 @@ Android Build/
 # Backup copies made before each change - kept on this computer, never pushed
 _backup_before_*/
 _to_delete/
+
+# Editor-only steering logs (DriveRecorder.cs writes them while testing)
+SteeringLogs/
+
+# Unity build byproducts
+.utmp/
+*_BurstDebugInformation_DoNotShip/
+
+# Old Unity Version Control (Plastic SCM) files - the project uses git
+.plastic/
+ignore.conf
