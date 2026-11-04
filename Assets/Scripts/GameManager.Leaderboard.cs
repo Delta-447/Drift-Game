@@ -499,11 +499,11 @@ public partial class GameManager
 
     Text lbGameOverLine;
 
-    /// <summary>The weekly line on the results screen, between the stats and RETRY.</summary>
+    /// <summary>The weekly line on the results screen, under the stats.</summary>
     void BuildLbGameOverLine()
     {
-        lbGameOverLine = MakeText(goCard, "GOWeekly", 34, TextAnchor.MiddleCenter,
-            new Vector2(0.5f, 0.5f), new Vector2(0f, -192f), new Vector2(940f, 56f), true);
+        lbGameOverLine = MakeText(goCard, "GOWeekly", GoWeeklySize, TextAnchor.MiddleCenter,
+            new Vector2(0.5f, 0.5f), new Vector2(0f, -192f), new Vector2(940f, 70f), true);
         lbGameOverLine.gameObject.SetActive(false);
     }
 
@@ -530,7 +530,7 @@ public partial class GameManager
             lbGameOverLine.text = Loc.F("WEEKLY RANK  #{0}", lbLocked ? 1 : rank);
             lbGameOverLine.color = new Color(1f, 1f, 1f, 0.85f);
         }
-        FitToWidth(lbGameOverLine, 34, 900f, true);
+        FitToWidth(lbGameOverLine, GoWeeklySize, 900f, true);
     }
 
     // ------------------------------------------------------------ in-run rival
@@ -1127,6 +1127,12 @@ public partial class GameManager
         lbPanel.SetActive(false);
         audioMan.PlayTap();
         RefreshWeeklyMenu();
+        // opened by MENU on the results: carry on out to the menu
+        if (lbLeaveAfter)
+        {
+            lbLeaveAfter = false;
+            ResultsMenu();
+        }
     }
 
     /// <summary>Hands over the oldest waiting prize on its own reveal screen.</summary>

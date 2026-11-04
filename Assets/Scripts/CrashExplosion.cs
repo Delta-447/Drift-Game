@@ -37,6 +37,37 @@ public class CrashExplosion : MonoBehaviour
         go.AddComponent<CrashExplosion>().Build(size);
     }
 
+    /// <summary>
+    /// The wreck left burning after the blast: flames licking over the body
+    /// and smoke rolling up off it, until <see cref="ClearAll"/> (or a minute
+    /// and a half, whichever comes first). <paramref name="rotation"/> is the
+    /// car's, so the fire is spread along its length.
+    /// </summary>
+    public static void Burn(Vector3 position, Quaternion rotation, float size = 1f)
+    {
+        var go = new GameObject("WreckFire");
+        go.transform.SetPositionAndRotation(position, rotation);
+        go.AddComponent<CrashExplosion>().BuildFire(size);
+    }
+
+    /// <summary>Puts out every blast and fire - leaving the results, or a revive.</summary>
+    public static void ClearAll()
+    {
+        foreach (var blast in FindObjectsByType<CrashExplosion>())
+        {
+            Destroy(blast.gameObject);
+        }
+    }
+
+    static void EnsureMaterials()
+    {
+        if (fireMat != null) return;
+        fireMat = Lit(new Color(1f, 0.55f, 0.12f), 3.2f);
+        emberMat = Lit(new Color(1f, 0.82f, 0.25f), 4f);
+        smokeMat = Lit(new Color(0.16f, 0.15f, 0.16f), 0f);
+        debrisMat = Lit(new Color(0.09f, 0.09f, 0.11f), 0f);
+    }
+
     static Material Lit(Color colour, float emission)
     {
         Shader sh = Shader.Find("Universal Render Pipeline/Lit");
@@ -54,13 +85,7 @@ public class CrashExplosion : MonoBehaviour
 
     void Build(float size)
     {
-        if (fireMat == null)
-        {
-            fireMat = Lit(new Color(1f, 0.55f, 0.12f), 3.2f);
-            emberMat = Lit(new Color(1f, 0.82f, 0.25f), 4f);
-            smokeMat = Lit(new Color(0.16f, 0.15f, 0.16f), 0f);
-            debrisMat = Lit(new Color(0.09f, 0.09f, 0.11f), 0f);
-        }
+        EnsureMaterials();
 
         // the flash: one bright ball that swells and is gone
         flash = MakePart(PrimitiveType.Sphere, emberMat,
@@ -132,10 +157,124 @@ public class CrashExplosion : MonoBehaviour
         return g;
     }
 
+    // ------------------------------------------------------- the wreck fire
+
+    const float BurnLife = 90f;
+    const float PuffLife = 2.2f;
+    const float PuffEvery = 0.2f;
+
+    bool burning;
+    float fireSize, nextPuff;
+    Transform[] flames;
+    Vector3[] flameHome;
+    float[] flameScale;
+    Transform[] puffs;
+    float[] puffAge, puffSize;
+    Vector3[] puffDrift;
+
+    void BuildFire(float size)
+    {
+        EnsureMaterials();
+        burning = true;
+        fireSize = size;
+
+        // a cluster of flames over the length of the body, the hottest in
+        // the middle
+        const int FlameCount = 6;
+        flames = new Transform[FlameCount];
+        flameHome = new Vector3[FlameCount];
+        flameScale = new float[FlameCount];
+        for (int i = 0; i < FlameCount; i++)
+        {
+            var home = new Vector3(Random.Range(-0.45f, 0.45f), Random.Range(0.05f, 0.4f),
+                                   Mathf.Lerp(-0.9f, 0.9f, i / (float)(FlameCount - 1))) * size;
+            float scale = Random.Range(0.4f, 0.65f) * size;
+            flames[i] = MakePart(PrimitiveType.Sphere, i % 3 == 1 ? emberMat : fireMat,
+                                 home, scale).transform;
+            flames[i].localRotation = Quaternion.identity;   // stretched upward, not any old way
+            flames[i].localScale = Vector3.zero;     // they catch, rather than appear
+            flameHome[i] = home;
+            flameScale[i] = scale;
+        }
+
+        // the smoke is a small pool of puffs, used over and over
+        const int PuffCount = 12;
+        puffs = new Transform[PuffCount];
+        puffAge = new float[PuffCount];
+        puffSize = new float[PuffCount];
+        puffDrift = new Vector3[PuffCount];
+        for (int i = 0; i < PuffCount; i++)
+        {
+            puffs[i] = MakePart(PrimitiveType.Sphere, smokeMat, Vector3.zero, 1f).transform;
+            puffs[i].gameObject.SetActive(false);
+            puffAge[i] = -1f;
+        }
+    }
+
+    void TickFire(float dt)
+    {
+        t += dt;
+        float caught = Mathf.Clamp01(t / 0.6f);
+        float dying = Mathf.Clamp01((t - (BurnLife - 3f)) / 3f);
+        float strength = caught * (1f - dying);
+
+        // flames flicker in size and lick upward, each to its own rhythm
+        for (int i = 0; i < flames.Length; i++)
+        {
+            float n = Mathf.PerlinNoise(t * 3.1f + i * 7.3f, i * 1.7f);
+            float s = flameScale[i] * strength * (0.6f + 0.8f * n);
+            flames[i].localScale = new Vector3(s, s * (1.15f + 0.6f * n), s);
+            flames[i].localPosition = flameHome[i] + Vector3.up * (0.15f * n * fireSize);
+        }
+
+        // smoke rolls up off it, growing as it rises and then thinning away
+        Vector3 up = transform.InverseTransformDirection(Vector3.up);
+        nextPuff -= dt;
+        if (nextPuff <= 0f && strength > 0.2f)
+        {
+            nextPuff = PuffEvery;
+            for (int i = 0; i < puffs.Length; i++)
+            {
+                if (puffAge[i] >= 0f) continue;
+                puffAge[i] = 0f;
+                puffSize[i] = Random.Range(0.45f, 0.75f) * fireSize;
+                puffDrift[i] = new Vector3(Random.Range(-0.35f, 0.35f), 0f,
+                                           Random.Range(-0.35f, 0.35f));
+                puffs[i].localPosition = flameHome[Random.Range(0, flameHome.Length)]
+                                         + up * (0.4f * fireSize);
+                puffs[i].localRotation = Random.rotation;
+                puffs[i].gameObject.SetActive(true);
+                break;
+            }
+        }
+        for (int i = 0; i < puffs.Length; i++)
+        {
+            if (puffAge[i] < 0f) continue;
+            puffAge[i] += dt;
+            float a = puffAge[i] / PuffLife;
+            if (a >= 1f)
+            {
+                puffAge[i] = -1f;
+                puffs[i].gameObject.SetActive(false);
+                continue;
+            }
+            puffs[i].localPosition += (up * 1.5f + puffDrift[i]) * fireSize * dt;
+            float s = puffSize[i] * (0.6f + 1.6f * a) * (1f - a * a);
+            puffs[i].localScale = Vector3.one * Mathf.Max(0.001f, s);
+        }
+
+        if (t >= BurnLife) Destroy(gameObject);
+    }
+
     void Update()
     {
         // unscaled: the crash pauses the game underneath it
         float dt = Time.unscaledDeltaTime;
+        if (burning)
+        {
+            TickFire(dt);
+            return;
+        }
         t += dt;
         float p = Mathf.Clamp01(t / Life);
 

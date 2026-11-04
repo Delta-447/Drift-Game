@@ -90,6 +90,16 @@ public class CarController : MonoBehaviour
     }
     float pendingBoost;
     float boostBonus;
+
+    /// <summary>
+    /// Where the steady climb alone has got to, on a run that climbs. A boost
+    /// lifts the car above it for a moment and then drains back down to it,
+    /// so only the climb raises the speed for good.
+    /// </summary>
+    float rampSpeed;
+    /// <summary>How fast speed above the steady climb drains away, m/s per second.</summary>
+    const float SurgeFadeRate = 1.5f;
+
     [Tooltip("How quickly a boost's extra top speed bleeds away (m/s per second).")]
     public float boostFadeRate = 11f;
     [Tooltip("How fast queued boosts feed into speed (m/s per second).")]
@@ -491,6 +501,7 @@ public class CarController : MonoBehaviour
         track = trackGenerator;
         DistanceTraveled = track.roadBehindStart; // start with road behind us
         CurrentSpeed = baseSpeed;
+        rampSpeed = baseSpeed;
         LateralOffset = 0f;
         LateralVelocity = 0f;
         smoothedSteer = 0f;
@@ -583,6 +594,18 @@ public class CarController : MonoBehaviour
         }
         CurrentSpeed = Mathf.Min(speedCeiling, CurrentSpeed + gain);
         if (CurrentSpeed > speedCeiling) CurrentSpeed = speedCeiling;
+
+        // On a run that climbs, the climb is the only thing that raises the
+        // speed for good. Anything above it - a banked drift combo's surge -
+        // drains back down to it. Before, every combo stacked onto the last:
+        // drifting through corners added speed far faster than the climb did,
+        // and most players were near top speed by the sunset.
+        if (speedGainPerSecond > 0f)
+        {
+            rampSpeed = Mathf.Clamp(rampSpeed + speedGainPerSecond * dt, baseSpeed, Mathf.Max(baseSpeed, maxSpeed));
+            if (pendingBoost <= 0f && CurrentSpeed > rampSpeed)
+                CurrentSpeed = Mathf.MoveTowards(CurrentSpeed, rampSpeed, SurgeFadeRate * dt);
+        }
 
         // Races run at a fixed pace - no ramp - so nothing was ever pulling
         // the speed back down after a boost pad. The ceiling dropped away but
@@ -1661,6 +1684,7 @@ public class CarController : MonoBehaviour
         maxSpeed = speed;
         speedGainPerSecond = 0f;
         CurrentSpeed = speed;
+        rampSpeed = speed;
     }
 
     /// <summary>
@@ -1720,6 +1744,7 @@ public class CarController : MonoBehaviour
     public void LaunchAt(float speed)
     {
         CurrentSpeed = speed;
+        rampSpeed = speed;
         pendingBoost = 0f;
         boostBonus = 0f;
     }

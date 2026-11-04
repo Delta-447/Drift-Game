@@ -60,7 +60,80 @@ public class CameraFollow : MonoBehaviour
     public void SetShowcase(bool on)
     {
         showcase = on;
+        wreck = false;
         if (on) introT = -1f;
+    }
+
+    [Header("Wreck shot")]
+    [Tooltip("Degrees a second the camera circles the wreck after a crash.")]
+    public float wreckOrbitSpeed = 7f;
+    [Tooltip("How far from the wreck the camera settles, and how high above it.")]
+    public float wreckRadius = 11f;
+    public float wreckHeight = 3.6f;
+
+    bool wreck;
+    float wreckT, wreckAngle, wreckRadius0, wreckHeight0;
+    Vector3 wreckFocus;
+
+    /// <summary>
+    /// The shot after a crash. From wherever the chase camera was, it is
+    /// thrown up and out by the blast so the whole fireball is in view, then
+    /// circles slowly round the burnt-out car - which it keeps a little above
+    /// the middle of the screen, between the headline and the results.
+    /// Anything that moves the camera on (the menu, a new run) turns it off.
+    /// </summary>
+    public void SetWreckShot(bool on)
+    {
+        wreck = on && target != null;
+        if (!wreck) return;
+        introT = -1f;
+        showcase = false;
+        wreckT = 0f;
+        // the car has stopped dead, so the point it was at is all that matters
+        wreckFocus = car != null ? car.BodyCentre : target.position + Vector3.up * 0.65f;
+        Vector3 off = transform.position - wreckFocus;
+        wreckHeight0 = off.y;
+        off.y = 0f;
+        if (off.sqrMagnitude < 0.01f) off = -target.forward * distanceBehind;
+        wreckRadius0 = off.magnitude;
+        wreckAngle = Mathf.Atan2(off.x, off.z) * Mathf.Rad2Deg;
+    }
+
+    void ApplyWreckShot(float dt)
+    {
+        wreckT += dt;
+
+        // Thrown up and out to a set distance by the blast, easing off
+        // quickly. Set, not "further back": at speed the chase camera trails
+        // well behind the car, and from there the wreck would be tiny.
+        float back = 1f - Mathf.Exp(-2.4f * wreckT);
+        // then the slow circle, gathering speed gently
+        float orbit = Mathf.SmoothStep(0f, 1f, Mathf.Clamp01((wreckT - 0.5f) / 1.5f));
+        wreckAngle += wreckOrbitSpeed * orbit * dt;
+
+        float radius = Mathf.Lerp(wreckRadius0, wreckRadius, back);
+        float rise = Mathf.Lerp(wreckHeight0, wreckHeight, back);
+        Vector3 pos = wreckFocus + Quaternion.Euler(0f, wreckAngle, 0f) * Vector3.forward * radius
+                      + Vector3.up * rise;
+        transform.position = pos;
+
+        // aimed a little below the car, so the car sits above the middle of
+        // the screen, with a slight lean to match the headline
+        Vector3 aimAt = wreckFocus + Vector3.down * (1.3f * back);
+        Quaternion look = Quaternion.LookRotation(aimAt - pos, Vector3.up)
+                          * Quaternion.Euler(0f, 0f, -3f * back);
+        transform.rotation = Quaternion.Slerp(transform.rotation, look, 1f - Mathf.Exp(-5f * dt));
+
+        if (shake > 0.001f)
+        {
+            transform.position += Random.insideUnitSphere * shake;
+            shake = Mathf.MoveTowards(shake, 0f, 1.4f * dt);
+        }
+
+        if (cam != null)
+        {
+            cam.fieldOfView = Mathf.Lerp(cam.fieldOfView, 52f, 1f - Mathf.Exp(-3f * dt));
+        }
     }
 
     /// <summary>
@@ -114,6 +187,7 @@ public class CameraFollow : MonoBehaviour
         introSnap = !showcase;
         introSnapRot = !showcase;
         showcase = false;
+        wreck = false;
         introRoll = 0f;
         lastIntroAngle = showcaseAngle;
     }
@@ -299,6 +373,12 @@ public class CameraFollow : MonoBehaviour
         }
 
         float dt = Time.deltaTime;
+
+        if (wreck)
+        {
+            ApplyWreckShot(dt);
+            return;
+        }
 
         if (introT >= 0f)
         {

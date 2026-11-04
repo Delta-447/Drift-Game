@@ -252,7 +252,6 @@ public partial class GameManager : MonoBehaviour
     Vector3 startPos;
     float startYaw;
     Camera mainCam;
-    float gameOverAt;
     float bonusShownAt = -10f;
     Vector2 bonusBasePos;
     const float BonusDuration = 1.2f;
@@ -567,8 +566,10 @@ public partial class GameManager : MonoBehaviour
         WipeSaveOnce();
         // paint stays off the cars while the feature is locked
         CarPaint.Enabled = !PaintLocked;
-        // ads start loading now so the first one is ready when it is asked for
-        AdManager.Init();
+        // ads start loading as soon as the player has answered Apple's
+        // tracking popup, which comes up as the game first opens - Apple's
+        // rule: nothing that could track the player before that answer
+        TrackingPrompt.WhenAnswered(AdManager.Init);
         // real-money purchases: prices come from the store, paid packs are
         // handed out here (also ones paid for before a crash or restart)
         IapStore.Init();
@@ -1068,8 +1069,6 @@ public partial class GameManager : MonoBehaviour
     float bestAnimT = -1f;
     bool bestCarFlipped;
     int bestShownScore;
-    string bestPendingCause;
-    int bestPendingScore, bestPendingCoins, bestPendingBonus;
 
     void EnsureBestStage()
     {
@@ -1139,9 +1138,10 @@ public partial class GameManager : MonoBehaviour
 
     /// <summary>
     /// Black screen, and the car you were driving drifts across it laying the
-    /// new number down in its wake. The results screen waits behind it.
+    /// new number down in its wake. It plays on the way out of the results,
+    /// from MENU (ResultsMenu), so it never covers the crash or the results.
     /// </summary>
-    void ShowBestRun(string cause, int finalScore, int collected, int bonus)
+    void ShowBestRun(int finalScore)
     {
         EnsureBestStage();
 
@@ -1163,11 +1163,6 @@ public partial class GameManager : MonoBehaviour
             SetLayerRecursively(bestCar, ShowcaseLayer);
             CarPaint.Apply(bestCar, selectedCar);
         }
-
-        bestPendingCause = cause;
-        bestPendingScore = finalScore;
-        bestPendingCoins = collected;
-        bestPendingBonus = bonus;
 
         bestShownScore = finalScore;
         bestNumber.text = "0";
@@ -1231,13 +1226,14 @@ public partial class GameManager : MonoBehaviour
         bestPanel.SetActive(false);
         if (bestCar != null) { Destroy(bestCar); bestCar = null; }
         audioMan.PlayTap();
-        ShowGameOver(bestPendingCause, bestPendingScore, true,
-                     bestPendingCoins, bestPendingBonus);
+        // on with the way out: the weekly ranking if there is one, then the menu
+        ResultsMenu();
     }
 
     void LateUpdate()
     {
         TickBestRun();
+        TickWreck();
         TickGameOver();
         TickLeaderboard();
         TickRaceTags();
@@ -1305,7 +1301,13 @@ public partial class GameManager : MonoBehaviour
         tutorialOnly = false;
         CancelInvoke(nameof(FinishTutorialOnly));
 
-        // the wreck does not follow you into the lobby
+        // the wreck does not follow you into the lobby - nor does its fire
+        EndWreck();
+        CrashExplosion.ClearAll();
+        goAnimT = -1f;
+        goBestToShow = false;
+        goLbPending = false;
+        lbLeaveAfter = false;
         if (car != null && car.IsScorched)
         {
             EquipSelected();
@@ -1390,6 +1392,7 @@ public partial class GameManager : MonoBehaviour
         if (state != State.Playing) return;
         state = State.Paused;
         Time.timeScale = 0f;
+        HideDriftText();
         // the same lines, at the same size, as the quests window
         for (int i = 0; i < 3; i++) pauseQuestRows[i].text = QuestLine(i);
         pausePanel.SetActive(true);
@@ -4512,7 +4515,18 @@ public partial class GameManager : MonoBehaviour
     void BuyTirePack(int pack)
     {
         if (audioMan != null) audioMan.PlayTap();
-        IapStore.Buy(IapStore.TirePackIds[pack]);
+        if (IapStore.Buy(IapStore.TirePackIds[pack])) return;
+
+        // The store has not sent the packs yet (no connection, or still
+        // connecting). Never a dead button: the pack says so for a moment -
+        // the store is already trying again - then shows its price again.
+        if (packLabels[pack] != null)
+        {
+            // in place of the price, in the price's size, so it fits the button
+            packLabels[pack].text = PackTires[pack] + "\n<size=36>" + Loc.T("NOT AVAILABLE") + "</size>";
+            CancelInvoke(nameof(RefreshPackPrices));
+            Invoke(nameof(RefreshPackPrices), 2.5f);
+        }
     }
 
     /// <summary>
@@ -4548,7 +4562,7 @@ public partial class GameManager : MonoBehaviour
         {
             if (packLabels[i] == null) continue;
             string price = IapStore.PriceFor(IapStore.TirePackIds[i], PackFallbackPrices[i]);
-            packLabels[i].text = PackTires[i] + "\n<size=36>" + price + "</size>";
+            packLabels[i].text = PackTires[i] + "\n<size=" + PackPriceSize + ">" + price + "</size>";
         }
     }
 
@@ -5559,6 +5573,7 @@ public partial class GameManager : MonoBehaviour
         pendingCrash = result;
         state = State.ReviveOffer;
         Time.timeScale = 0f;
+        HideDriftText();
         audioMan.PlayCrash();
         // engine and tyre screech stop the moment you go off - they used to
         // hold on through the whole revive prompt
@@ -5750,8 +5765,8 @@ public partial class GameManager : MonoBehaviour
         UpdateQuest(0, Mathf.RoundToInt(car.DistanceTraveled), true);
         UpdateQuest(1, Mathf.RoundToInt(car.DistanceTraveled), false);
         UpdateQuest(7, 1, false);
-        gameOverAt = Time.unscaledTime;
         pendingDrift = 0f; // unbanked combo dies with you
+        HideDriftText();   // and so does its multiplier on screen
         if (camFollow != null) camFollow.Shake(0.8f);
         audioMan.PlayCrash();
 
@@ -5759,9 +5774,13 @@ public partial class GameManager : MonoBehaviour
         Vector3 blastAt = car.CarModelRoot != null
             ? car.CarModelRoot.position + Vector3.up * 0.4f
             : car.transform.position + Vector3.up * 0.7f;
-        CrashExplosion.Play(blastAt, 1.15f);
+        CrashExplosion.Play(blastAt, 1.45f);
         audioMan.PlayExplosion();
         car.Scorch();      // and it stays burnt on the results screen
+        // the camera pulls back to watch it go up, the car is thrown off its
+        // wheels, and the wreck is left burning behind the results
+        StartWreck(blastAt);
+        SetHudVisible(false);   // nothing in front of the fireball
         audioMan.StopDriving();
         audioMan.PlayMenuMusic();
 
@@ -5800,9 +5819,8 @@ public partial class GameManager : MonoBehaviour
             ShowRaceCrashLines(place, togo);
             return;
         }
-        // beating your best earns its own screen; the results wait behind it
-        if (newBest) ShowBestRun(cause, finalScore, coinsThisRun, bonusCoins);
-        else ShowGameOver(cause, finalScore, false, coinsThisRun, bonusCoins);
+        // a new best gets its own screen too, once MENU is pressed
+        ShowGameOver(cause, finalScore, newBest, coinsThisRun, bonusCoins);
     }
 
     void RestartRun()
@@ -5909,11 +5927,6 @@ public partial class GameManager : MonoBehaviour
 
             case State.GameOver:
                 TickFinishCinematic();
-                // space bar = quick retry while testing in the editor
-                if (Time.unscaledTime - gameOverAt > 0.6f && Input.GetKeyDown(KeyCode.Space))
-                {
-                    RestartRun();
-                }
                 break;
         }
     }
@@ -6119,11 +6132,12 @@ public partial class GameManager : MonoBehaviour
             if (banked >= DriftFlashMin)
             {
                 FlashBonus(Loc.F("+{0} DRIFT COMBO", banked), new Color(0.35f, 0.85f, 1f));
-                // A token surge only. This used to be worth up to 3 m/s, and
-                // with combos banking constantly it was quietly acting as a
-                // second accelerator on top of the ramp - the car reached its
-                // ceiling well before the ten minutes the ramp allows for.
-                car.Boost(Mathf.Min(0.9f, banked / 600f));
+                // A short surge that drains back to the normal climb (see
+                // CarController). It used to stay, every combo stacking on the
+                // last, and drifting through corners was quietly a second,
+                // much faster accelerator: most players were near top speed
+                // by the sunset. Now it is a feel-good whoosh, nothing more.
+                car.Boost(Mathf.Min(2f, banked / 300f));
             }
             UpdateQuest(5, banked, true);
             pendingDrift = 0f;
@@ -6206,6 +6220,16 @@ public partial class GameManager : MonoBehaviour
             }
         }
 
+    }
+
+    /// <summary>
+    /// Takes the floating DRIFT multiplier off the screen. It is only updated
+    /// while driving, so when driving stops - a crash, a pause - it would
+    /// otherwise hang there, frozen where it was.
+    /// </summary>
+    void HideDriftText()
+    {
+        if (driftText != null) driftText.gameObject.SetActive(false);
     }
 
     void AnimateBonus()
@@ -6962,7 +6986,7 @@ public partial class GameManager : MonoBehaviour
             int cCoins = coinPackCoins[i];
             int cCost = coinPackCost[i];
             Text label = MakeButton(shopScroll,
-                FormatCount(cCoins) + "\n<size=36>" + cCost + "</size>", 46,
+                FormatCount(cCoins) + "\n<size=" + PackPriceSize + ">" + cCost + "</size>", 46,
                 new Vector2(-330f + i * 330f, -1205f), new Vector2(305f, 155f),
                 () => BuyCoinPack(cCoins, cCost), null, true);
             label.rectTransform.anchoredPosition = new Vector2(40f, 0f);
@@ -7058,10 +7082,12 @@ public partial class GameManager : MonoBehaviour
             TextAnchor.MiddleCenter, new Vector2(0.5f, 0.5f),
             new Vector2(0f, -62f), new Vector2(700f, 50f), true);
         reviveHaveText.color = new Color(1f, 1f, 1f, 0.9f);
+        // green: the free way back in
         reviveAdLabel = MakeButton(revivePanel.transform, "AD", 38,
-            new Vector2(0f, -160f), new Vector2(760f, 120f), ReviveWithAd, null, true);
+            new Vector2(0f, -160f), new Vector2(760f, 120f), ReviveWithAd, GoGreen, true);
+        // grey: the way out, so it does not compete with the two revives
         MakeButton(revivePanel.transform, "GIVE UP", 40,
-            new Vector2(0f, -318f), new Vector2(560f, 110f), DeclineRevive);
+            new Vector2(0f, -318f), new Vector2(560f, 110f), DeclineRevive, GiveUpGrey);
 
         // The coin and tire counters were made first, so every window drew
         // over them. They come to the front now, above the menu, the shop,
@@ -7256,7 +7282,7 @@ public partial class GameManager : MonoBehaviour
     void TutorialOnlyCrash()
     {
         state = State.GameOver;
-        gameOverAt = Time.unscaledTime;
+        HideDriftText();
         EndTutorialHints();
         centerText.gameObject.SetActive(false);
         pauseButton.SetActive(false);
@@ -7288,167 +7314,7 @@ public partial class GameManager : MonoBehaviour
         if (tutorialHint != null) tutorialHint.color = new Color(1f, 1f, 1f, 0f);
     }
 
-    // ------------------------------------------------------- the death screen
-
-    RectTransform goCard;
-    Image goDim;
-    Text goTitle, goScore, goBestLine, goRunLabel;
-    readonly Text[] goStatValue = new Text[2];
-    readonly Text[] goStatLabel = new Text[2];
-    bool goRaceCrash;   // the death screen of a race: the place, no points
-    float goAnimT = -1f;
-    int goTargetScore;
-    bool goWasBest;
-
-    void BuildGameOverPanel(Transform uiRoot)
-    {
-        gameOverPanel = MakePanel(uiRoot, "GameOverPanel");
-
-        // full-bleed dim so the world behind reads as a backdrop, not clutter
-        var dimGo = new GameObject("Dim");
-        dimGo.transform.SetParent(gameOverPanel.transform, false);
-        goDim = dimGo.AddComponent<Image>();
-        goDim.color = new Color(0.62f, 0.05f, 0.08f, 0.62f);
-        var dimRt = goDim.rectTransform;
-        dimRt.anchorMin = Vector2.zero;
-        dimRt.anchorMax = Vector2.one;
-        dimRt.offsetMin = dimRt.offsetMax = Vector2.zero;
-
-        // everything below hangs off one holder so the whole screen can
-        // scale and slide in as a single piece
-        var holder = new GameObject("Holder");
-        holder.transform.SetParent(gameOverPanel.transform, false);
-        goCard = holder.AddComponent<RectTransform>();
-        goCard.anchorMin = goCard.anchorMax = goCard.pivot = new Vector2(0.5f, 0.5f);
-        goCard.anchoredPosition = Vector2.zero;
-        goCard.sizeDelta = new Vector2(1000f, 1400f);
-
-        MakeCard(goCard, new Vector2(0f, -40f), new Vector2(980f, 1120f),
-            new Color(0.10f, 0.06f, 0.12f, 0.93f));
-
-        goTitle = MakeText(goCard, "GOTitle", 92, TextAnchor.MiddleCenter,
-            new Vector2(0.5f, 0.5f), new Vector2(0f, 400f), new Vector2(950f, 130f));
-        goTitle.text = "CRASHED";
-        goTitle.color = new Color(1f, 0.34f, 0.28f);
-
-        goRunLabel = MakeText(goCard, "GORunLabel", 32, TextAnchor.MiddleCenter,
-            new Vector2(0.5f, 0.5f), new Vector2(0f, 300f), new Vector2(950f, 60f));
-        goRunLabel.text = "SCORE";
-        goRunLabel.color = new Color(1f, 1f, 1f, 0.55f);
-
-        goScore = MakeText(goCard, "GOScore", 130, TextAnchor.MiddleCenter,
-            new Vector2(0.5f, 0.5f), new Vector2(0f, 200f), new Vector2(950f, 190f));
-
-        goBestLine = MakeText(goCard, "GOBest", 42, TextAnchor.MiddleCenter,
-            new Vector2(0.5f, 0.5f), new Vector2(0f, 105f), new Vector2(950f, 60f), true);
-        goBestLine.color = new Color(1f, 1f, 1f, 0.85f);
-
-        // Two stat rows, label left and value right. The offsets are the
-        // CENTRE of each text box, so a left-aligned label that starts at
-        // x = -360 has to sit at -360 + width/2. (The coins picked up are
-        // already on the coin counter, so they are not listed again.)
-        string[] labels = { "DISTANCE", "BONUS" };
-        for (int i = 0; i < labels.Length; i++)
-        {
-            float y = -20f - i * 90f;
-            var lab = MakeText(goCard, "GOStatL" + i, 30, TextAnchor.MiddleLeft,
-                new Vector2(0.5f, 0.5f), new Vector2(-160f, y), new Vector2(400f, 60f), true);
-            lab.text = labels[i];
-            lab.color = new Color(1f, 1f, 1f, 0.6f);
-            goStatLabel[i] = lab;
-            goStatValue[i] = MakeText(goCard, "GOStatV" + i, 32, TextAnchor.MiddleRight,
-                new Vector2(0.5f, 0.5f), new Vector2(160f, y), new Vector2(400f, 60f), true);
-        }
-
-        MakeButton(goCard, "RETRY", 58,
-            new Vector2(0f, -320f), new Vector2(700f, 140f), RestartRun,
-            new Color(0.16f, 0.62f, 0.32f));
-        MakeButton(goCard, "MENU", 40,
-            new Vector2(0f, -470f), new Vector2(700f, 110f), LeaveResults);
-    }
-
-    /// <summary>Fills in the death screen and starts its entrance.</summary>
-    void ShowGameOver(string cause, int finalScore, bool newBest,
-                      int collected, int bonus)
-    {
-        goTitle.text = cause;
-        // "OFF THE ROAD" is far wider than "CRASHED", so the headline is
-        // sized to the words rather than fixed
-        goTitle.fontSize = Mathf.RoundToInt((cause.Length > 8 ? 58 : 92) * FontScale);
-        goTargetScore = finalScore;
-        goWasBest = newBest;
-        goScore.text = "0";
-        goBestLine.text = newBest ? "NEW PERSONAL BEST" : Loc.F("BEST  {0}", best);
-        goBestLine.color = newBest ? new Color(1f, 0.82f, 0.15f)
-                                   : new Color(1f, 1f, 1f, 0.85f);
-        goStatValue[0].text = Loc.F("{0} M", Mathf.RoundToInt(car.DistanceTraveled));
-        goStatValue[1].text = "+" + bonus;
-        goAnimT = 0f;
-        // an endless run's lines (a race crash hides them again afterwards)
-        goRaceCrash = false;
-        goRunLabel.text = "SCORE";
-        goBestLine.gameObject.SetActive(true);
-        for (int i = 0; i < goStatValue.Length; i++)
-        {
-            goStatValue[i].gameObject.SetActive(true);
-            goStatLabel[i].gameObject.SetActive(true);
-        }
-        gameOverPanel.SetActive(true);
-        gameOverPanel.transform.SetAsLastSibling();
-        // where the run left the player in the week (and who passed them)
-        LbFillGameOverLine();
-        // a new weekly best: the ranking comes up over the results
-        if (lbShowAfterRun)
-        {
-            lbShowAfterRun = false;
-            OpenLeaderboard(true);
-        }
-    }
-
-    /// <summary>A race's death screen: the place the car was in and how far was left.</summary>
-    void ShowRaceCrashLines(int place, float togo)
-    {
-        goRaceCrash = true;
-        goRunLabel.text = "PLACE";
-        goScore.text = Loc.F("P{0}/{1}", place, RaceMode.Opponents + 1);
-        goScore.color = Color.white;
-        goBestLine.text = Loc.F("{0}M TO GO", Mathf.RoundToInt(togo));
-        goBestLine.color = new Color(1f, 1f, 1f, 0.85f);
-        for (int i = 0; i < goStatValue.Length; i++)
-        {
-            goStatValue[i].gameObject.SetActive(false);
-            goStatLabel[i].gameObject.SetActive(false);
-        }
-    }
-
-    void TickGameOver()
-    {
-        if (goAnimT < 0f || gameOverPanel == null || !gameOverPanel.activeSelf) return;
-        goAnimT += Time.unscaledDeltaTime;
-
-        // card drops in and settles
-        float p = Mathf.Clamp01(goAnimT / 0.35f);
-        float ease = 1f - Mathf.Pow(1f - p, 3f);
-        goCard.localScale = Vector3.one * Mathf.Lerp(0.86f, 1f, ease);
-        goCard.anchoredPosition = new Vector2(0f, Mathf.Lerp(90f, 0f, ease));
-
-        // the score reels up rather than just appearing (a race has none)
-        float c = goRaceCrash ? -1f : Mathf.Clamp01((goAnimT - 0.2f) / 0.9f);
-        if (c >= 0f)
-        {
-        int shown = Mathf.RoundToInt(Mathf.Lerp(0f, goTargetScore,
-            1f - Mathf.Pow(1f - c, 3f)));
-        goScore.text = shown.ToString();
-        goScore.color = goWasBest
-            ? Color.Lerp(Color.white, new Color(1f, 0.85f, 0.2f),
-                         0.5f + 0.5f * Mathf.Sin(goAnimT * 3.5f))
-            : Color.white;
-        }
-
-        // the red wash floods in on impact, then settles
-        float wash = Mathf.Lerp(0.8f, 0.62f, Mathf.Clamp01(goAnimT / 0.8f));
-        goDim.color = new Color(0.62f, 0.05f, 0.08f, wash);
-    }
+    // the death screen and the wreck: GameManager.CrashScreen.cs
 
     /// <summary>
     /// Wraps a panel in a vertical ScrollRect. Returns the content transform
@@ -8015,11 +7881,21 @@ public partial class GameManager : MonoBehaviour
         btn.targetGraphic = img;
         btn.onClick.AddListener(onClick);
 
-        var text = MakeText(go.transform, "Label", fontSize, TextAnchor.MiddleCenter,
-            new Vector2(0.5f, 0.5f), Vector2.zero, size, plainFont);
+        // Button labels are set a size up from the rest of the text - players
+        // found them small and hard to read - and shrink only as far as it
+        // takes to stay inside the button, in every language.
+        var text = MakeText(go.transform, "Label", Mathf.RoundToInt(fontSize * ButtonTextScale),
+            TextAnchor.MiddleCenter, new Vector2(0.5f, 0.5f), Vector2.zero, size, plainFont);
+        if (text is LocText fit) fit.fitInEnglish = true;
         text.text = label;
         return text;
     }
+
+    /// <summary>How much larger a button's label is than the size it asks for.</summary>
+    const float ButtonTextScale = 1.25f;
+
+    /// <summary>Size of the price line on the shop's tire and coin packs.</summary>
+    const int PackPriceSize = 44;
 
     const string SettingsIconPath = "UI/icon_settings";
 

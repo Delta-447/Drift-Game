@@ -115,7 +115,8 @@ public partial class GameManager
     void RefreshAdCheck()
     {
         if (adCheckText == null) return;
-        string report = AdManager.StatusReport();
+        // ads, then purchases (the tire packs)
+        string report = AdManager.StatusReport() + "\n\n" + IapStore.StatusReport();
         // shown exactly as written: none of it is translated
         if (adCheckText is LocText lt) lt.SetShown(report);
         else adCheckText.text = report;

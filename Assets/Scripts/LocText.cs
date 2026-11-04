@@ -13,10 +13,16 @@ using UnityEngine.UI;
 /// - In any language but English, a line that would run past the edge of its
 ///   box is set a little smaller until it fits. Translations are often longer
 ///   than the English the layout was drawn around. (English keeps its
-///   hand-tuned sizes exactly.)
+///   hand-tuned sizes exactly - except where <see cref="fitInEnglish"/> is set.)
 /// </summary>
 public class LocText : Text
 {
+    /// <summary>
+    /// Fit to the box in English too. Button labels are set large so they are
+    /// easy to read, and a long one must still stay inside its button.
+    /// </summary>
+    public bool fitInEnglish;
+
     string lastRaw;
     string lastShown;
     int requestedSize = -1;   // the size the game asked for
@@ -58,7 +64,7 @@ public class LocText : Text
 
     void FitWidth()
     {
-        if (Loc.Current == Loc.Lang.English) return;
+        if (Loc.Current == Loc.Lang.English && !fitInEnglish) return;
         if (horizontalOverflow != HorizontalWrapMode.Overflow) return;
         if (font == null) return;
 

@@ -133,5 +133,106 @@ public static class IosTrackingPostProcess
         proj.AddFrameworkToProject(proj.GetUnityFrameworkTargetGuid(), "AppTrackingTransparency.framework", true);
         proj.WriteToFile(projPath);
     }
+
+    /// <summary>
+    /// Unity's own UnityRuntime.framework says in its Info.plist that it runs
+    /// on iOS 15, while its code is built for a newer iOS (17, with Unity 6.6).
+    /// App Store Connect rejects any framework whose Info.plist and code
+    /// disagree - ITMS-90208, "does not support the minimum OS Version
+    /// specified in the Info.plist" - which is what happened to build 2 of
+    /// 1.0.3. This sets the framework's MinimumOSVersion to the iOS its code
+    /// was built for, and makes sure the app itself asks for no less.
+    /// </summary>
+    [PostProcessBuild(200)]
+    public static void FixUnityRuntimeMinimumOS(BuildTarget target, string path)
+    {
+        if (target != BuildTarget.iOS) return;
+
+        string projPath = PBXProject.GetPBXProjectPath(path);
+        var proj = new PBXProject();
+        proj.ReadFromFile(projPath);
+        string appMinimum = proj.GetBuildPropertyForAnyConfig(proj.GetUnityMainTargetGuid(),
+                                                              "IPHONEOS_DEPLOYMENT_TARGET");
+        if (string.IsNullOrEmpty(appMinimum)) appMinimum = PlayerSettings.iOS.targetOSVersionString;
+
+        string want = appMinimum;
+        var frameworkPlists = new System.Collections.Generic.List<string>();
+        foreach (string plistPath in Directory.GetFiles(path, "Info.plist", SearchOption.AllDirectories))
+        {
+            string folder = Path.GetFileName(Path.GetDirectoryName(plistPath));
+            if (folder != "UnityRuntime.framework") continue;
+            frameworkPlists.Add(plistPath);
+            // what the code inside was actually built for, when it can be read
+            string builtFor = BinaryMinimumOS(Path.Combine(Path.GetDirectoryName(plistPath), "UnityRuntime"));
+            want = HigherVersion(want, builtFor);
+        }
+        if (frameworkPlists.Count == 0 || string.IsNullOrEmpty(want)) return;
+
+        foreach (string plistPath in frameworkPlists)
+        {
+            var plist = new PlistDocument();
+            plist.ReadFromFile(plistPath);
+            plist.root.SetString("MinimumOSVersion", want);
+            plist.WriteToFile(plistPath);
+        }
+
+        // the app may not promise an older iOS than the framework it carries
+        if (want != appMinimum)
+        {
+            foreach (string guid in new[] { proj.ProjectGuid(), proj.GetUnityMainTargetGuid(),
+                                             proj.GetUnityFrameworkTargetGuid() })
+                proj.SetBuildProperty(guid, "IPHONEOS_DEPLOYMENT_TARGET", want);
+            proj.WriteToFile(projPath);
+        }
+        UnityEngine.Debug.Log("UnityRuntime.framework minimum iOS set to " + want +
+                              " (app minimum was " + appMinimum + ")");
+    }
+
+    /// <summary>
+    /// The minimum iOS a compiled binary was built for (its LC_BUILD_VERSION
+    /// "minos"), read with Xcode's vtool. Null if it cannot be read.
+    /// </summary>
+    static string BinaryMinimumOS(string binaryPath)
+    {
+        if (!File.Exists(binaryPath)) return null;
+        try
+        {
+            var info = new System.Diagnostics.ProcessStartInfo("xcrun",
+                "vtool -show-build \"" + binaryPath + "\"")
+            {
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true,
+            };
+            using (var process = System.Diagnostics.Process.Start(info))
+            {
+                string output = process.StandardOutput.ReadToEnd();
+                process.WaitForExit(10000);
+                foreach (string line in output.Split('\n'))
+                {
+                    string trimmed = line.Trim();
+                    if (trimmed.StartsWith("minos "))
+                        return trimmed.Substring(6).Trim();
+                }
+            }
+        }
+        catch (System.Exception e)
+        {
+            UnityEngine.Debug.LogWarning("Could not read the minimum iOS of " + binaryPath + ": " + e.Message);
+        }
+        return null;
+    }
+
+    /// <summary>The higher of two iOS versions such as "15.0" and "17.0".</summary>
+    static string HigherVersion(string a, string b)
+    {
+        if (string.IsNullOrEmpty(a)) return b;
+        if (string.IsNullOrEmpty(b)) return a;
+        System.Version va, vb;
+        if (!System.Version.TryParse(a.Contains(".") ? a : a + ".0", out va)) return b;
+        if (!System.Version.TryParse(b.Contains(".") ? b : b + ".0", out vb)) return a;
+        return vb > va ? b : a;
+    }
 }
 #endif
