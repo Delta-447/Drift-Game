@@ -639,7 +639,7 @@ public partial class GameManager
     void BuildWeeklyMenuButton(Transform menu)
     {
         // plain bold lettering: the racing font gets hard to read this small
-        weeklyMenuLabel = MakeButton(menu, "", 40, new Vector2(0f, 172f), new Vector2(700f, 78f),
+        weeklyMenuLabel = MakeButton(menu, "", 40, new Vector2(0f, MenuWeeklyY), new Vector2(700f, 78f),
             OpenLeaderboardFromMenu, new Color(0.16f, 0.11f, 0.26f, 0.92f), true);
         weeklyMenuLabel.color = new Color(1f, 0.86f, 0.3f);
         var lrt = weeklyMenuLabel.rectTransform;
@@ -749,6 +749,7 @@ public partial class GameManager
         lbTitle = MakeText(body, "LbTitle", LbTitleSize, TextAnchor.MiddleCenter,
             new Vector2(0.5f, 0.5f), new Vector2(0f, 760f), new Vector2(940f, 100f));
         lbTitle.color = new Color(1f, 0.72f, 0.12f);
+        StyleScreenTitle(lbTitle, null);
 
         // the league, as a coloured pill
         lbLeaguePill = MakeCard(body, new Vector2(0f, 666f), new Vector2(560f, 88f), LeagueColors[0]);
@@ -976,7 +977,7 @@ public partial class GameManager
     void FitToWidth(Text t, int size, float room, bool plainFont = false)
     {
         // the same size MakeText gave it (plain text is set a little larger)
-        int full = Mathf.RoundToInt(size * FontScale * (plainFont ? 1.2f : 1f) * Loc.SizeScale(Loc.Current));
+        int full = TextSize(size, plainFont, t.font);
         t.fontSize = full;
         float w = t.preferredWidth;
         if (w > room) t.fontSize = Mathf.Max(8, Mathf.FloorToInt(full * room / w));

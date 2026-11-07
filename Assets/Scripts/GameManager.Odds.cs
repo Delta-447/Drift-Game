@@ -246,6 +246,7 @@ public partial class GameManager
         oddsTitle = MakeText(oddsPanel.transform, "OddsTitle", 64, TextAnchor.MiddleCenter,
             new Vector2(0.5f, 0.5f), new Vector2(0f, 640f), new Vector2(900f, 90f));
         oddsTitle.color = new Color(1f, 0.72f, 0.12f);
+        StyleScreenTitle(oddsTitle, null);
 
         var sub = MakeText(oddsPanel.transform, "OddsSub", 44, TextAnchor.MiddleCenter,
             new Vector2(0.5f, 0.5f), new Vector2(0f, 562f), new Vector2(900f, 60f), true);

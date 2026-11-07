@@ -149,7 +149,13 @@ public partial class GameManager
         goMenuRt.anchoredPosition = new Vector2(0f, -860f);
         goMenuRt.sizeDelta = new Vector2(660f, 150f);
         goMenuGroup = menuGo.AddComponent<CanvasGroup>();
-        MakeButton(goMenuRt, "MENU", 66, Vector2.zero, new Vector2(660f, 150f), ResultsMenu);
+        goMenuLabel = MakeButton(goMenuRt, "MENU", 66, Vector2.zero, new Vector2(660f, 150f), ResultsMenu);
+        goMenuImage = goMenuLabel.transform.parent.GetComponent<Image>();
+        goMenuColour = goMenuImage.color;
+        // with boxes from the road to open, the button says so, with a box on it
+        goMenuBox = MakeMenuIcon(goMenuLabel.transform.parent, "UI/icon_mystery_box",
+            new Vector2(-218f, 2f), 124f).rectTransform;
+        goMenuBox.gameObject.SetActive(false);
 
         // the impact flash, over everything
         goFlash = MakeGoLayer(root, "Flash").gameObject.AddComponent<Image>();
@@ -352,7 +358,58 @@ public partial class GameManager
         goLbPending = lbShowAfterRun;
         lbShowAfterRun = false;
         lbLeaveAfter = false;
+        RefreshGoMenuButton();
     }
+
+    Text goMenuLabel;
+    Image goMenuImage;
+    Color goMenuColour;
+    RectTransform goMenuBox;
+
+    /// <summary>
+    /// MENU on the results - or, while boxes from the road are waiting, a
+    /// gold OPEN button with the box at its left end and how many there are.
+    /// MENU is in the racing font across the whole button; OPEN is in the
+    /// small-text font in the room beside the box, so it never runs into it.
+    /// </summary>
+    void RefreshGoMenuButton()
+    {
+        if (goMenuLabel == null) return;
+        if (goMenuFont == null)
+        {
+            goMenuFont = goMenuLabel.font;
+            goMenuStyle = goMenuLabel.fontStyle;
+            goMenuSize = goMenuLabel.fontSize;
+            goMenuLabelSize = goMenuLabel.rectTransform.sizeDelta;
+            goMenuLabelY = goMenuLabel.rectTransform.anchoredPosition.y;
+        }
+        int boxes = RoadBoxesWaiting;
+        bool open = boxes > 0;
+        var lrt = goMenuLabel.rectTransform;
+        if (open && SmallFont != null && Loc.DisplayFontFor(Loc.Current) == null)
+        {
+            goMenuLabel.font = SmallFont;
+            goMenuLabel.fontStyle = FontStyle.Normal;
+            goMenuLabel.fontSize = TextSize(56, false, SmallFont);
+        }
+        else
+        {
+            goMenuLabel.font = goMenuFont;
+            goMenuLabel.fontStyle = goMenuStyle;
+            goMenuLabel.fontSize = goMenuSize;
+        }
+        lrt.sizeDelta = open ? new Vector2(400f, goMenuLabelSize.y) : goMenuLabelSize;
+        lrt.anchoredPosition = new Vector2(open ? 80f : 0f, goMenuLabelY);
+        goMenuLabel.text = open ? Loc.F("OPEN  {0}", "x" + boxes) : "MENU";
+        goMenuImage.color = open ? new Color(1f, 0.74f, 0.12f) : goMenuColour;
+        goMenuBox.gameObject.SetActive(open);
+    }
+
+    Font goMenuFont;
+    FontStyle goMenuStyle;
+    int goMenuSize;
+    Vector2 goMenuLabelSize;
+    float goMenuLabelY;
 
     /// <summary>
     /// MENU on the results. Whatever the run earned plays first, one after
@@ -362,6 +419,12 @@ public partial class GameManager
     /// </summary>
     void ResultsMenu()
     {
+        // boxes picked up on the road open first (AfterRoadBox comes back here)
+        if (RoadBoxesWaiting > 0)
+        {
+            OpenRoadBox();
+            return;
+        }
         if (goBestToShow)
         {
             goBestToShow = false;

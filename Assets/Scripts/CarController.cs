@@ -276,41 +276,71 @@ public class CarController : MonoBehaviour
     bool anchorActive;
     int steerFingerId = -1;     // the finger doing the steering
     bool inputHeld;             // a finger or steering key is down this frame
-    float jumpSwipeBaseY = -1f;
+    // the steering finger's recent path, for telling a flick from steering
+    const int FlickSamples = 24;
+    readonly Vector3[] flickPath = new Vector3[FlickSamples];   // x, y, time
+    int flickCount, flickHead;
+    float flickCooldownUntil;
+
+    [Tooltip("A jump flick has to happen within this many seconds.")]
+    public float jumpFlickTime = 0.2f;
+    [Tooltip("And it has to go up at least this many times as far as it goes sideways.")]
+    public float jumpFlickSteepness = 1.6f;
 
     /// <summary>
-    /// True on a fresh upward flick of the finger that is already down. The
+    /// True on a quick upward flick of the finger that is already down. The
     /// thumb never has to be lifted - which matters, because lifting it also
     /// releases the steering - and letting go can no longer jump by accident.
+    ///
+    /// It used to count any rise from the lowest point the finger had been,
+    /// however slowly, so a thumb creeping up the glass while it steered
+    /// jumped by itself. Now only a real flick counts: the finger has to rise
+    /// <see cref="jumpSwipeFraction"/> of the screen within
+    /// <see cref="jumpFlickTime"/>, travelling mostly upward, not sideways.
     /// </summary>
     bool SwipedUp()
     {
-        float y;
+        Vector2 p;
         bool held;
-
         if (Input.touchCount > 0)
         {
             Touch t = Input.GetTouch(0);
-            y = t.position.y;
+            p = t.position;
             held = t.phase != TouchPhase.Ended && t.phase != TouchPhase.Canceled;
+            // a fresh touch starts a fresh path
+            if (t.phase == TouchPhase.Began) flickCount = 0;
         }
         else
         {
-            y = Input.mousePosition.y;
+            p = Input.mousePosition;
             held = Input.GetMouseButton(0);
         }
+        if (!held) { flickCount = 0; return false; }
 
-        if (!held) { jumpSwipeBaseY = -1f; return false; }
-        if (jumpSwipeBaseY < 0f) { jumpSwipeBaseY = y; return false; }
+        float now = Time.unscaledTime;
+        flickHead = (flickHead + 1) % FlickSamples;
+        flickPath[flickHead] = new Vector3(p.x, p.y, now);
+        if (flickCount < FlickSamples) flickCount++;
+        if (now < flickCooldownUntil) return false;
 
-        // the reference point trails the finger downward, so a swipe is always
-        // measured from the lowest point it has reached
-        if (y < jumpSwipeBaseY) jumpSwipeBaseY = y;
-
-        if (y - jumpSwipeBaseY < Screen.height * jumpSwipeFraction) return false;
-
-        jumpSwipeBaseY = y;      // one flick, one jump
-        return true;
+        // the lowest point of the last moment, and how far the finger has
+        // come up - and across - since then
+        float need = Screen.height * jumpSwipeFraction;
+        for (int k = 1; k < flickCount; k++)
+        {
+            Vector3 q = flickPath[(flickHead - k + FlickSamples) % FlickSamples];
+            if (now - q.z > jumpFlickTime) break;
+            float rise = p.y - q.y;
+            float across = Mathf.Abs(p.x - q.x);
+            if (rise >= need && rise >= across * jumpFlickSteepness)
+            {
+                // one flick, one jump: the finger has to start a new one
+                flickCount = 0;
+                flickCooldownUntil = now + 0.3f;
+                return true;
+            }
+        }
+        return false;
     }
 
     bool tickedThisFrame;

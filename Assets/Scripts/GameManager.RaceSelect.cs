@@ -97,6 +97,7 @@ public partial class GameManager
             new Vector2(0.5f, 0.5f), new Vector2(0f, 868f), new Vector2(900f, 100f));
         title.text = "RACES";
         title.color = new Color(1f, 0.72f, 0.12f);
+        StyleScreenTitle(title, "UI/icon_race_flags");
 
         BuildRaceUpgrades(p);
 
@@ -385,7 +386,8 @@ public partial class GameManager
             bool unlocked = open && RaceMode.IsUnlocked(level);
             bool done = RaceMode.IsCompleted(level);
             raceStageLabels[s].text = !unlocked ? ""
-                : done ? (s + 1) + "\n<size=18>" + Loc.T("WON") + "</size>"
+                : done ? (s + 1) + "\n<size=" + Mathf.RoundToInt(raceStageLabels[s].fontSize * 0.68f) + ">"
+                         + Loc.T("WON") + "</size>"
                 : (s + 1).ToString();
             raceStageImages[s].color = !open ? LockedGrey : done ? RaceWonColor : RaceOpenColor;
             raceStageLocks[s].gameObject.SetActive(!unlocked);

@@ -7,7 +7,8 @@ using UnityEditor.iOS.Xcode;
 /// <summary>
 /// Every iOS build: adds the sentence Apple's tracking popup shows
 /// (NSUserTrackingUsageDescription) to Info.plist, links the
-/// AppTrackingTransparency framework, and adds the advertisers'
+/// AppTrackingTransparency framework (and Security, for SaveBackup's
+/// keychain copy), and adds the advertisers'
 /// SKAdNetwork IDs Unity Ads asks for. Without the sentence, iOS will not
 /// show the popup and App Review rejects the build.
 /// </summary>
@@ -131,6 +132,9 @@ public static class IosTrackingPostProcess
         var proj = new PBXProject();
         proj.ReadFromFile(projPath);
         proj.AddFrameworkToProject(proj.GetUnityFrameworkTargetGuid(), "AppTrackingTransparency.framework", true);
+        // the keychain, where SaveBackup keeps progress through a reinstall
+        // (Unity links it already; this makes sure)
+        proj.AddFrameworkToProject(proj.GetUnityFrameworkTargetGuid(), "Security.framework", false);
         proj.WriteToFile(projPath);
     }
 

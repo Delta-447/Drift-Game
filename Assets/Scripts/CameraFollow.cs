@@ -44,6 +44,15 @@ public class CameraFollow : MonoBehaviour
     public float showcaseRadius = 7.5f;
     public float showcaseHeight = 1.5f;
 
+    /// <summary>
+    /// How far below the car the lobby camera aims, in metres - which lifts
+    /// the car up the screen. The menu sets it, so the car sits between its
+    /// title and its buttons; anything else leaves it at 0. The camera eases
+    /// to a new value rather than jumping.
+    /// </summary>
+    [System.NonSerialized] public float lobbyLift;
+    float liftNow, introLift;
+
     Camera cam;
     CarController car;
     float shake;
@@ -163,14 +172,163 @@ public class CameraFollow : MonoBehaviour
         // Aim at the middle of the bodywork, exactly - smoothing the rotation
         // here would leave the car trailing off-centre, because it is moving
         // the whole time.
+        liftNow = Mathf.Lerp(liftNow, lobbyLift, 1f - Mathf.Exp(-3f * dt));
         Vector3 aimAt = (car != null ? car.BodyCentre : target.position + Vector3.up * 0.65f)
-                        + aimShift;
+                        + aimShift - Vector3.up * liftNow;
         transform.rotation = Quaternion.LookRotation(aimAt - transform.position, Vector3.up);
 
         if (cam != null)
         {
             cam.fieldOfView = Mathf.Lerp(cam.fieldOfView, 40f, 1f - Mathf.Exp(-4f * dt));
         }
+    }
+
+    // ------------------------------------------------------ the opening title
+
+    float titleShotT = -1f;
+    int titleShotFrame;
+
+    /// <summary>
+    /// Drives the camera for the opening title (TitleIntro), which passes its
+    /// own clock in every frame, so a skip moves the camera along with it.
+    /// It only takes over while the lobby showcase is on, and it ends on the
+    /// showcase pose exactly, so when the intro stops calling the lobby simply
+    /// carries on from there.
+    /// </summary>
+    public void TitleShot(float t)
+    {
+        titleShotT = t;
+        titleShotFrame = Time.frameCount;
+    }
+
+    public void EndTitleShot()
+    {
+        titleShotT = -1f;
+    }
+
+    // still being driven - if the intro vanishes without saying, it lets go
+    bool TitleShotLive
+    {
+        get { return titleShotT >= 0f && Time.frameCount - titleShotFrame <= 2; }
+    }
+
+    /// <summary>
+    /// One framing of the car on the showcase orbit: angle from directly
+    /// behind it (positive round its left side, and not wrapped at 180, so a
+    /// move always goes the way it is written), distance, height, lens, and
+    /// where the camera aims - above the middle of the car and ahead of it.
+    /// </summary>
+    struct ShotPose
+    {
+        public float angle, radius, height, fov, aimUp, aimAhead, roll;
+
+        public ShotPose(float angle, float radius, float height, float fov,
+                        float aimUp, float aimAhead, float roll)
+        {
+            this.angle = angle;
+            this.radius = radius;
+            this.height = height;
+            this.fov = fov;
+            this.aimUp = aimUp;
+            this.aimAhead = aimAhead;
+            this.roll = roll;
+        }
+
+        public static ShotPose Lerp(ShotPose a, ShotPose b, float k)
+        {
+            return new ShotPose(
+                Mathf.Lerp(a.angle, b.angle, k), Mathf.Lerp(a.radius, b.radius, k),
+                Mathf.Lerp(a.height, b.height, k), Mathf.Lerp(a.fov, b.fov, k),
+                Mathf.Lerp(a.aimUp, b.aimUp, k), Mathf.Lerp(a.aimAhead, b.aimAhead, k),
+                Mathf.Lerp(a.roll, b.roll, k));
+        }
+    }
+
+    // The intro's shots. The phone is held upright, so the car is framed down
+    // its length - from behind, then from the nose - where it fills the
+    // screen; side on it would not fit. Low, but never under 0.8 m: the road
+    // climbs and dips (up to about 5%), and the camera must stay above it.
+    // Behind the car, low, looking past it down the road:
+    static readonly ShotPose TailWide = new ShotPose(8f, 5.4f, 0.85f, 54f, 0.35f, 3f, -4f);
+    // creeping in on the back wheels, the horizon tipping the other way:
+    static readonly ShotPose TailClose = new ShotPose(-6f, 4.7f, 0.80f, 50f, 0.30f, 2.5f, 3f);
+    // the whip round the right-hand side lands on the nose:
+    static readonly ShotPose NoseLow = new ShotPose(-168f, 6.0f, 0.85f, 46f, 0.45f, 0f, 0f);
+    // and eases back while the name is up, car low in the frame under it:
+    static readonly ShotPose NoseHero = new ShotPose(-178f, 7.0f, 1.00f, 44f, 0.50f, 0f, 0f);
+
+    void ApplyTitleShot(float dt)
+    {
+        float t = titleShotT;
+
+        // the lobby's own framing, which the whole move ends on
+        float bob = Mathf.Sin(Time.unscaledTime * 0.6f) * 0.18f;
+        // (aimed below the car by the lobby's lift, so the hand-over is exact)
+        var lobby = new ShotPose(showcaseAngle - 360f, showcaseRadius, showcaseHeight + bob,
+                                 40f, -lobbyLift, 0f, 0f);
+        liftNow = lobbyLift;
+
+        ShotPose pose;
+        if (t < TitleIntro.WhipStart)
+        {
+            pose = ShotPose.Lerp(TailWide, TailClose, SmoothStep01(t / TitleIntro.WhipStart));
+        }
+        else if (t < TitleIntro.WhipEnd)
+        {
+            // fast through the middle; it swings in close past the flank and
+            // banks into the turn, which is what sells the whip
+            float k = (t - TitleIntro.WhipStart) / (TitleIntro.WhipEnd - TitleIntro.WhipStart);
+            pose = ShotPose.Lerp(TailClose, NoseLow, EaseInOutCubic(k));
+            pose.radius -= Mathf.Sin(k * Mathf.PI) * 0.6f;
+            pose.roll -= Mathf.Sin(k * Mathf.PI) * 6f;
+        }
+        else if (t < TitleIntro.SettleStart)
+        {
+            float k = (t - TitleIntro.WhipEnd) / (TitleIntro.SettleStart - TitleIntro.WhipEnd);
+            pose = ShotPose.Lerp(NoseLow, NoseHero, 1f - Mathf.Pow(1f - Mathf.Clamp01(k), 2f));
+        }
+        else
+        {
+            float k = (t - TitleIntro.SettleStart) / (TitleIntro.MoveEnd - TitleIntro.SettleStart);
+            pose = ShotPose.Lerp(NoseHero, lobby, EaseInOutCubic(k));
+        }
+        PlaceOnOrbit(pose, dt);
+    }
+
+    void PlaceOnOrbit(ShotPose pose, float dt)
+    {
+        Vector3 fwd = target.forward;
+        fwd.y = 0f;
+        if (fwd.sqrMagnitude < 0.001f) fwd = Vector3.forward;
+        fwd.Normalize();
+
+        // rigidly locked to the car, like the showcase, so it never lags
+        Vector3 offset = Quaternion.AngleAxis(pose.angle, Vector3.up) * (-fwd) * pose.radius;
+        Vector3 pos = target.position + aimShift + offset + Vector3.up * pose.height;
+        Vector3 centre = car != null ? car.BodyCentre : target.position + Vector3.up * 0.65f;
+        Vector3 aimAt = centre + aimShift + Vector3.up * pose.aimUp + fwd * pose.aimAhead;
+
+        if (shake > 0.001f)
+        {
+            pos += Random.insideUnitSphere * shake;
+            shake = Mathf.MoveTowards(shake, 0f, 1.4f * dt);
+        }
+        transform.position = pos;
+        transform.rotation = Quaternion.LookRotation(aimAt - pos, Vector3.up)
+                             * Quaternion.Euler(0f, 0f, pose.roll);
+        if (cam != null) cam.fieldOfView = pose.fov;
+    }
+
+    static float SmoothStep01(float p)
+    {
+        p = Mathf.Clamp01(p);
+        return p * p * (3f - 2f * p);
+    }
+
+    static float EaseInOutCubic(float p)
+    {
+        p = Mathf.Clamp01(p);
+        return p < 0.5f ? 4f * p * p * p : 1f - Mathf.Pow(-2f * p + 2f, 3f) / 2f;
     }
 
     /// <summary>
@@ -186,6 +344,9 @@ public class CameraFollow : MonoBehaviour
         // from there instead of snapping
         introSnap = !showcase;
         introSnapRot = !showcase;
+        // the lobby's lift is let go of gradually through the move
+        introLift = showcase ? liftNow : 0f;
+        liftNow = 0f;
         showcase = false;
         wreck = false;
         introRoll = 0f;
@@ -247,7 +408,8 @@ public class CameraFollow : MonoBehaviour
         }
 
         // keep the car framed until the last stretch, then look up the road
-        Vector3 atCar = car != null ? car.BodyCentre : target.position + Vector3.up * 0.65f;
+        Vector3 atCar = (car != null ? car.BodyCentre : target.position + Vector3.up * 0.65f)
+                        - Vector3.up * introLift * (1f - travel);
         float aim = Mathf.SmoothStep(0f, 1f, Mathf.Clamp01((p - 0.62f) / 0.38f));
         Vector3 lookTarget = Vector3.Lerp(atCar, LookPoint(), aim);
 
@@ -388,7 +550,8 @@ public class CameraFollow : MonoBehaviour
 
         if (showcase)
         {
-            ApplyShowcase(dt);
+            if (TitleShotLive) ApplyTitleShot(dt);
+            else ApplyShowcase(dt);
             return;
         }
 

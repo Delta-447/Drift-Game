@@ -314,6 +314,7 @@ public partial class GameManager : MonoBehaviour
             new Vector2(0.5f, 0.5f), new Vector2(0f, 500f), new Vector2(900f, 100f));
         title.text = "LANGUAGE";
         title.color = new Color(1f, 0.72f, 0.12f);
+        StyleScreenTitle(title, null);
 
         const float ColX = 225f;
         const float Top = 360f;
@@ -332,10 +333,12 @@ public partial class GameManager : MonoBehaviour
 
             // each name in its own lettering, whatever the current language
             Font own = Loc.DisplayFontFor(lang);
-            label.font = own != null ? own : uiFont;
-            label.fontStyle = own != null ? FontStyle.Normal
+            Font latin = SmallFont != null ? SmallFont : uiFont;
+            label.font = own != null ? own : latin;
+            label.fontStyle = own != null || latin == SmallFont ? FontStyle.Normal
                             : usingCustomFont ? FontStyle.Bold : FontStyle.BoldAndItalic;
-            label.fontSize = Mathf.RoundToInt(40 * FontScale * Loc.SizeScale(lang));
+            label.fontSize = Mathf.RoundToInt(40 * FontScale * (own == null && latin == SmallFont ? SmallFontLift : 1f)
+                                              * Loc.SizeScale(lang));
             var shown = label as LocText;
             string name = Loc.Display(Loc.NativeName(lang), lang);
             if (shown != null) shown.SetShown(name);
@@ -550,6 +553,8 @@ public partial class GameManager : MonoBehaviour
     // Bump this string to wipe every save on the next launch - useful for
     // testing first-run flow and the new-high-score reveal. It only fires once
     // per token, so a player never loses progress twice to the same bump.
+    // A reinstalled game's keychain copy (SaveBackup) carries the token it was
+    // saved under, so an old copy is wiped by a bump just the same.
     const string SaveResetToken = "reset-2026-10-02-second-reset";
 
     static void WipeSaveOnce()
@@ -557,6 +562,7 @@ public partial class GameManager : MonoBehaviour
         if (PlayerPrefs.GetString("SaveResetToken", "") == SaveResetToken) return;
         PlayerPrefs.DeleteAll();
         PlayerPrefs.SetString("SaveResetToken", SaveResetToken);
+        SaveBackup.AfterWipe();
         PlayerPrefs.Save();
         Debug.Log("[SAVE] progress reset (" + SaveResetToken + ")");
     }
@@ -575,6 +581,7 @@ public partial class GameManager : MonoBehaviour
         IapStore.Init();
         IapStore.GrantHandler = GrantPurchase;
         IapStore.PricesChanged += RefreshPackPrices;
+        IapStore.PurchaseEnded += OnPurchaseEnded;
         Application.targetFrameRate = 60;
         Screen.orientation = ScreenOrientation.Portrait; // ignored in editor, applies on device
         best = PlayerPrefs.GetInt("HighScore", 0);
@@ -712,7 +719,7 @@ public partial class GameManager : MonoBehaviour
         int day = LoginDayOf(loginStreakNew);
         loginDayText.text = Loc.F("DAY {0}", day)
             + (loginStreakNew > 7 ? "  " + Loc.F("(STREAK {0})", loginStreakNew) : "");
-        loginRewardText.fontSize = Mathf.RoundToInt((loginAlreadyClaimed ? 44 : 62) * FontScale);
+        loginRewardText.fontSize = TextSize(loginAlreadyClaimed ? 44 : 62, false, loginRewardText.font);
         loginRewardText.text = loginAlreadyClaimed ? "COME BACK TOMORROW!" : LoginPrizeLine(day);
         claimBtnLabel.text = loginAlreadyClaimed ? "OK" : "CLAIM";
 
@@ -741,8 +748,7 @@ public partial class GameManager : MonoBehaviour
         // the car is not named - which one it is, is the surprise
         loginCellTexts[6].text = showCar ? Loc.T("NEW CAR!") : Loc.F("+{0} COINS", LoginRewards[6]);
         // the coins line is wider than NEW CAR!
-        loginCellTexts[6].fontSize = Mathf.RoundToInt((showCar ? 66 : 50) * FontScale
-                                                      * Loc.SizeScale(Loc.Current));
+        loginCellTexts[6].fontSize = TextSize(showCar ? 66 : 50, false, loginCellTexts[6].font);
         if (loginCarRays != null) loginCarRays.gameObject.SetActive(showCar);
         loginCarEdge.rectTransform.localScale = Vector3.one;
 
@@ -830,7 +836,7 @@ public partial class GameManager : MonoBehaviour
         loginButtonCheckT = 0f;
         if (loginBadge != null) loginBadge.SetActive(loginButtonLive);
         var img = loginButtonRt.GetComponent<Image>();
-        if (img != null) img.color = loginButtonLive ? LoginYellow : new Color(0.35f, 0.32f, 0.45f);
+        if (img != null) img.color = loginButtonLive ? LoginTileLive : new Color(0.35f, 0.32f, 0.45f);
         loginMenuLabel.color = Color.white;
         if (!loginButtonLive)
         {
@@ -1037,15 +1043,30 @@ public partial class GameManager : MonoBehaviour
         SetLayerRecursively(showcaseRoot, ShowcaseLayer);
         if (mainCam != null) mainCam.cullingMask &= ~(1 << ShowcaseLayer);
 
-        rewardCarRT = new RenderTexture(512, 512, 16);
+        rewardCarRT = MakeShowcaseRT(768);
         MakeShowcaseCam(showcaseRoot.transform,
             rewardPos + new Vector3(0f, 1.0f, -3.4f), rewardPos, rewardCarRT);
 
         showcaseRoot.SetActive(false);
     }
 
+    /// <summary>
+    /// A render texture for a 3D preview shown in the UI, at about the size
+    /// it is shown at, with 4x anti-aliasing so edges are smooth rather than
+    /// stepped. (These used to be a third of their on-screen size with none,
+    /// which is what made the boxes and prizes look pixelated.) Its memory is
+    /// handed back whenever its stage is hidden - see ReleaseTargetsWhenHidden.
+    /// </summary>
+    static RenderTexture MakeShowcaseRT(int size)
+    {
+        return new RenderTexture(size, size, 16) { antiAliasing = 4 };
+    }
+
     void MakeShowcaseCam(Transform parent, Vector3 pos, Vector3 lookAt, RenderTexture rt)
     {
+        // a stage hands its cameras' textures back while it is hidden
+        if (parent != null && parent.root.GetComponent<ReleaseTargetsWhenHidden>() == null)
+            parent.root.gameObject.AddComponent<ReleaseTargetsWhenHidden>();
         var go = new GameObject("ShowcaseCam");
         go.transform.SetParent(parent, false);
         go.transform.position = pos;
@@ -1081,7 +1102,7 @@ public partial class GameManager : MonoBehaviour
 
         // side on and low, so the car reads as a silhouette crossing the frame
         // framed for a car sitting on the ground at its driving size
-        bestCarRT = new RenderTexture(900, 900, 16);
+        bestCarRT = MakeShowcaseRT(1024);
         MakeShowcaseCam(bestStage.transform,
             BestStagePos + new Vector3(3.4f, 1.9f, -6.6f),
             BestStagePos + new Vector3(0f, 0.75f, 0f), bestCarRT);
@@ -1144,6 +1165,7 @@ public partial class GameManager : MonoBehaviour
     void ShowBestRun(int finalScore)
     {
         EnsureBestStage();
+        bestStage.SetActive(true);
 
         if (bestCar != null) Destroy(bestCar);
         // The race/swap builder, not the garage one. The garage spins its cars
@@ -1225,6 +1247,7 @@ public partial class GameManager : MonoBehaviour
         bestAnimT = -1f;
         bestPanel.SetActive(false);
         if (bestCar != null) { Destroy(bestCar); bestCar = null; }
+        if (bestStage != null) bestStage.SetActive(false);   // its camera stops too
         audioMan.PlayTap();
         // on with the way out: the weekly ranking if there is one, then the menu
         ResultsMenu();
@@ -1297,6 +1320,7 @@ public partial class GameManager : MonoBehaviour
         if (track != null) track.ClearFinishLine();
         state = State.Menu;
         Time.timeScale = 1f;
+        SaveBackup.Write();     // the run's coins and progress, kept for a reinstall
         EndTutorialHints();
         tutorialOnly = false;
         CancelInvoke(nameof(FinishTutorialOnly));
@@ -1331,6 +1355,7 @@ public partial class GameManager : MonoBehaviour
         if (racePanel != null) racePanel.SetActive(false);
         RefreshSpinBadge();
         RefreshLoginButton();
+        RefreshRaceButton();
         ClearGaragePreview();
 
         EndFinishCinematic();
@@ -1366,7 +1391,11 @@ public partial class GameManager : MonoBehaviour
         driftText.gameObject.SetActive(false);
         SetHudVisible(false);
         menuBestText.text = Loc.F("HIGH SCORE  {0}", best);
-        FitToWidth(menuBestText, 52, 960f);   // a long score stays on screen
+        FitToWidth(menuBestText, 52, MenuBestRoom);   // a long score stays on its pill
+        // boxes from a run that was left from the pause screen open here
+        if (RoadBoxesWaiting > 0 && !introRunning && !loginPanel.activeSelf
+            && coachPhase == CoachPhase.None && !roadBoxOpening)
+            OpenRoadBox();
         // back to the lobby theme (the intro owns the music until it hands over)
         if (audioMan != null && !introRunning) audioMan.PlayMenuMusic();
     }
@@ -1466,6 +1495,7 @@ public partial class GameManager : MonoBehaviour
                 Loc.T("Music and sound effects\ncreated for this game") + "\n\n" +
                 Loc.T("FONTS") + "\n\n" +
                 "Noto Sans - Google\nRusso One - Jovanny Lemonad\n" +
+                "Lilita One - Juan Montoreano\n" +
                 Loc.T("(SIL Open Font License)") + "\n\n" +
                 Loc.T("All models used under their\nrespective licenses.");
         }
@@ -1637,7 +1667,6 @@ public partial class GameManager : MonoBehaviour
     float boxRevealAt = -1f;
     bool pendingBoxIsToken;
     bool pendingBoxTires;        // the prize waiting in the box is tyres
-    Material rubberMat;
     Text persistentCoinsText, persistentTiresText;
     RectTransform coinPillRt, tirePillRt;
     int shownCoins = int.MinValue, shownTires = int.MinValue;
@@ -2199,7 +2228,9 @@ public partial class GameManager : MonoBehaviour
                      : "+" + Mathf.RoundToInt(RaceMode.Strength() * 100f) + "%";
         // the picture carries the meaning, so the text just states the numbers
         // the price has a bar of its own along the bottom of the tile
-        return "<size=33>" + Loc.F("LV {0}", lv) + "</size>\n<size=28>" + value + "</size>";
+        Text label = upgradeLabels[(int)u];
+        return "<size=" + RichSize(33, label, 1.15f) + ">" + Loc.F("LV {0}", lv) + "</size>\n<size="
+               + RichSize(28, label, 1.15f) + ">" + value + "</size>";
     }
 
     void OpenRaces()
@@ -2896,64 +2927,89 @@ public partial class GameManager : MonoBehaviour
     }
 
     /// <summary>Gold triangle pointing straight down at the wheel.</summary>
+    /// <summary>
+    /// The wheel's pointer: a gold triangle with a dark rim, tip at the bottom.
+    /// Drawn at twice the size it is shown and with every edge anti-aliased,
+    /// so the slanted sides are smooth instead of stepped.
+    /// </summary>
     static Texture2D MakePointerTexture()
     {
-        const int W = 96, H = 112;
+        const int W = 192, H = 224;
+        const float Rim = 10f;                       // dark rim, in pixels
         var tex = new Texture2D(W, H, TextureFormat.RGBA32, false);
+        var px = new Color32[W * H];
         Color gold = new Color(1f, 0.82f, 0.12f, 1f);
         Color edge = new Color(0.35f, 0.22f, 0.04f, 1f);
-        Color clear = new Color(0f, 0f, 0f, 0f);
+        // turns a distance measured across (x) into one square to the slanted side
+        float squareOn = H / Mathf.Sqrt(H * H + W * W * 0.25f);
 
         for (int y = 0; y < H; y++)
         {
             // y = 0 is the bottom of the texture: the tip
-            float t = y / (float)(H - 1);
-            float halfWidth = t * (W * 0.5f);
+            float halfWidth = (y + 0.5f) / H * (W * 0.5f);
             for (int x = 0; x < W; x++)
             {
-                float dx = Mathf.Abs(x - (W - 1) * 0.5f);
-                Color c = dx > halfWidth ? clear
-                        : dx > halfWidth - 5f ? edge
-                        : gold;
-                tex.SetPixel(x, y, c);
+                float dx = Mathf.Abs(x + 0.5f - W * 0.5f);
+                float inside = (halfWidth - dx) * squareOn;       // pixels in from the side
+                float alpha = Mathf.Clamp01(inside + 0.5f);
+                Color c = Color.Lerp(edge, gold, Mathf.Clamp01(inside - Rim + 0.5f));
+                c.a = alpha;
+                px[y * W + x] = c;
             }
         }
+        tex.SetPixels32(px);
         tex.Apply();
         tex.wrapMode = TextureWrapMode.Clamp;
         return tex;
     }
 
-    /// <summary>Flat-coloured pie chart used as the wheel face.</summary>
+    /// <summary>
+    /// Flat-coloured pie chart used as the wheel face. Made at 1024 pixels,
+    /// larger than it is ever shown, and every edge - the rim, the hub, the
+    /// dark seams between slices - is anti-aliased, so it stays smooth as it
+    /// spins instead of showing stepped edges.
+    /// </summary>
     static Texture2D MakeWheelTexture(int slices)
     {
-        const int S = 512;
+        const int S = 1024;
+        const float SeamHalf = 4.5f;                 // seam half-width, in pixels
         var tex = new Texture2D(S, S, TextureFormat.RGBA32, false);
-        float half = (S - 1) * 0.5f;
+        var px = new Color32[S * S];
+        float half = S * 0.5f;                       // the wheel's radius, in pixels
+        float seg = Mathf.PI * 2f / slices;
+        Color dark = new Color(0.14f, 0.10f, 0.22f, 1f);
 
         for (int y = 0; y < S; y++)
         {
             for (int x = 0; x < S; x++)
             {
-                float dx = (x - half) / half, dy = (y - half) / half;
+                float dx = x + 0.5f - half, dy = y + 0.5f - half;
                 float r = Mathf.Sqrt(dx * dx + dy * dy);
-                if (r > 1f) { tex.SetPixel(x, y, new Color(0, 0, 0, 0)); continue; }
+                float cover = Mathf.Clamp01(half - 1f - r + 0.5f);   // the outside edge
+                if (cover <= 0f) { px[y * S + x] = new Color32(0, 0, 0, 0); continue; }
 
-                // rim
-                if (r > 0.94f) { tex.SetPixel(x, y, new Color(0.14f, 0.10f, 0.22f, 1f)); continue; }
-
-                float ang = Mathf.Atan2(dx, dy) * Mathf.Rad2Deg;   // 0 at the top
-                if (ang < 0f) ang += 360f;
-                int idx = Mathf.Clamp((int)(ang / (360f / slices)), 0, slices - 1);
+                float ang = Mathf.Atan2(dx, dy);     // 0 at the top, clockwise
+                if (ang < 0f) ang += Mathf.PI * 2f;
+                int idx = Mathf.Clamp((int)(ang / seg), 0, slices - 1);
+                float within = ang - idx * seg;
+                bool nearStart = within < seg * 0.5f;
+                float toSeam = (nearStart ? within : seg - within) * r;   // pixels to the seam
                 Color c = Wheel[idx].color;
 
-                // a darker band at every seam so the slices read apart
-                float within = (ang % (360f / slices)) / (360f / slices);
-                if (within < 0.012f || within > 0.988f) c *= 0.45f;
-                if (r < 0.16f) c = new Color(0.14f, 0.10f, 0.22f);  // hub
+                // the slice beside this one, blended in right on the boundary
+                int next = nearStart ? (idx + slices - 1) % slices : (idx + 1) % slices;
+                c = Color.Lerp(c, Wheel[next].color, Mathf.Clamp01(0.5f - toSeam) * 0.5f);
 
-                tex.SetPixel(x, y, new Color(c.r, c.g, c.b, 1f));
+                // a darker band at every seam so the slices read apart
+                c = Color.Lerp(c, c * 0.45f, Mathf.Clamp01(SeamHalf - toSeam + 0.5f));
+                // hub and rim
+                c = Color.Lerp(c, dark, Mathf.Clamp01(0.16f * half - r + 0.5f));
+                c = Color.Lerp(c, dark, Mathf.Clamp01(r - 0.94f * half + 0.5f));
+                c.a = cover;
+                px[y * S + x] = c;
             }
         }
+        tex.SetPixels32(px);
         tex.Apply();
         tex.wrapMode = TextureWrapMode.Clamp;
         return tex;
@@ -2977,6 +3033,7 @@ public partial class GameManager : MonoBehaviour
             new Vector2(0.5f, 0.5f), new Vector2(0f, 700f), new Vector2(900f, 120f));
         title.text = "MYSTERY WHEEL";
         title.color = new Color(1f, 0.72f, 0.12f);
+        StyleScreenTitle(title, "UI/icon_menu_spin");
 
         // information is set upright and plain - the racing font is for titles
         wheelSpinsText = MakeText(wheelPanel.transform, "WheelSpins", 50, TextAnchor.MiddleCenter,
@@ -3298,7 +3355,7 @@ public partial class GameManager : MonoBehaviour
         float togo = Mathf.Max(0f, raceFinishDistance - car.DistanceTraveled);
         int place = race.PlayerPlace(car.DistanceTraveled);
         raceHudText.text = Loc.F("P{0}/{1}", place, RaceMode.Opponents + 1)
-                           + "\n<size=24>" + Loc.F("{0}M", Mathf.RoundToInt(togo)) + "</size>";
+                           + "\n<size=32>" + Loc.F("{0}M", Mathf.RoundToInt(togo)) + "</size>";
 
         UpdateFinishTension();
         if (car.DistanceTraveled >= raceFinishDistance) FinishRace(place);
@@ -3334,8 +3391,8 @@ public partial class GameManager : MonoBehaviour
         PlayFinishCinematic(place);
         SetFinishCoins(raceCoins);
         centerText.text = (place == 1 ? Loc.T("WINNER!") : Loc.F("FINISHED P{0}", place)) +
-            "\n<size=30>" + Loc.T(place == 1 ? "NEXT RACE UNLOCKED" : "1ST PLACE UNLOCKS THE NEXT RACE") + "</size>" +
-            (raceCoins > 0 ? "\n<size=34>" + Loc.F("+{0} COINS", raceCoins) + "</size>" : "");
+            "\n<size=36>" + Loc.T(place == 1 ? "NEXT RACE UNLOCKED" : "1ST PLACE UNLOCKS THE NEXT RACE") + "</size>" +
+            (raceCoins > 0 ? "\n<size=42>" + Loc.F("+{0} COINS", raceCoins) + "</size>" : "");
         // the result screen waits for the cinematic to play out
         centerText.gameObject.SetActive(false);
         gameOverPanel.SetActive(false);
@@ -3458,6 +3515,19 @@ public partial class GameManager : MonoBehaviour
     bool introSeen;            // the title sequence has actually appeared
     Text menuTitle, menuSubTitle;
     float titleFadeT;
+
+    /// <summary>
+    /// The lobby title's two lines. The opening title (TitleIntro) asks where
+    /// they are, so the name it flies home lands exactly on them.
+    /// </summary>
+    public static Text LobbyTitleText { get; private set; }
+    public static Text LobbySubTitleText { get; private set; }
+
+    /// <summary>
+    /// The whole game UI's fade. It is hidden while the opening title plays
+    /// over the 3D scene, and fades up as the name settles into the lobby.
+    /// </summary>
+    CanvasGroup uiGroup;
 
     /// <summary>Brings the lobby title up as the intro's copy fades away.</summary>
     void FadeInMenuTitle()
@@ -3680,40 +3750,21 @@ public partial class GameManager : MonoBehaviour
 
     // ------------------------------------------------------------------ shop
 
+    /// <summary>Size of a tyre in the shop's tire-pack stacks.</summary>
+    const float StackTyreSize = 0.85f;
+
+    /// <summary>
+    /// One tyre lying flat, the same tyre as the pickup on the road and the
+    /// tire icon (see TireModel).
+    /// </summary>
     GameObject BuildTireModel(Transform parent, Vector3 pos)
     {
-        GameObject prefab = Resources.Load<GameObject>("Tire/tire");
         var root = new GameObject("TireModel");
         root.transform.SetParent(parent, false);
         root.transform.position = pos;
-        if (prefab == null) return root;
-
-        GameObject model = Instantiate(prefab, root.transform);
-        model.transform.localPosition = Vector3.zero;
-        var rends = model.GetComponentsInChildren<Renderer>();
-        if (rends.Length > 0)
-        {
-            // black rubber
-            if (rubberMat == null)
-            {
-                Shader sh = Shader.Find("Universal Render Pipeline/Lit");
-                if (sh == null) sh = Shader.Find("Standard");
-                rubberMat = new Material(sh) { color = new Color(0.05f, 0.05f, 0.06f) };
-            }
-            foreach (var r in rends) r.sharedMaterial = rubberMat;
-
-            Bounds b = rends[0].bounds;
-            for (int i = 1; i < rends.Length; i++) b.Encapsulate(rends[i].bounds);
-            float k = 1.0f / Mathf.Max(b.size.x, b.size.y, b.size.z, 0.001f);
-            model.transform.localScale = model.transform.localScale * k;
-            Vector3 centerLocal = root.transform.InverseTransformPoint(b.center);
-            model.transform.localPosition = -centerLocal * k;
-            // lie flat: thinnest axis points up
-            if (b.size.x <= b.size.y && b.size.x <= b.size.z)
-                model.transform.localRotation = model.transform.localRotation * Quaternion.Euler(0f, 0f, 90f);
-            else if (b.size.z <= b.size.x && b.size.z <= b.size.y)
-                model.transform.localRotation = model.transform.localRotation * Quaternion.Euler(90f, 0f, 0f);
-        }
+        var tyre = TireModel.Create(root.transform, pos, StackTyreSize);
+        // lying flat: the axle points up
+        tyre.transform.localRotation = Quaternion.Euler(0f, 0f, 90f);
         return root;
     }
 
@@ -3783,45 +3834,15 @@ public partial class GameManager : MonoBehaviour
         if (shopShowcaseRoot != null) return;
         shopShowcaseRoot = new GameObject("ShopShowcase");
 
-        Shader shader = Shader.Find("Universal Render Pipeline/Lit");
-        if (shader == null) shader = Shader.Find("Standard");
-        var redMat = new Material(shader) { color = new Color(0.8f, 0.16f, 0.12f) };
-        var darkRedMat = new Material(shader) { color = new Color(0.6f, 0.1f, 0.08f) };
-        var grayMat = new Material(shader) { color = new Color(0.35f, 0.35f, 0.38f) };
-        var goldMat = new Material(shader) { color = new Color(1f, 0.8f, 0.2f) };
-
-        // --- animated toolbox (hollow: floor + four walls, so prizes rise out)
+        // --- the mystery box: a pit-lane crate (see PrizeChest), hollow so
+        // the prize can rise out of it
         Vector3 boxPos = new Vector3(140f, -400f, 0f);
-        var boxRoot = new GameObject("Toolbox");
-        boxRoot.transform.SetParent(shopShowcaseRoot.transform, false);
-        boxRoot.transform.position = boxPos;
-        toolboxRoot = boxRoot;
+        PrizeChest.Rig crate = PrizeChest.Build(PrizeChest.Style.Crate, shopShowcaseRoot.transform, boxPos);
+        toolboxRoot = crate.root;
+        toolboxAnim = toolboxRoot.AddComponent<ToolboxAnimator>();
+        toolboxAnim.UseRig(crate);
 
-        MakeShowcasePart(boxRoot.transform, PrimitiveType.Cube, darkRedMat,
-            boxPos + new Vector3(0f, 0.03f, 0f), Quaternion.identity, new Vector3(1.5f, 0.06f, 0.8f));
-        MakeShowcasePart(boxRoot.transform, PrimitiveType.Cube, redMat,
-            boxPos + new Vector3(0f, 0.3f, 0.37f), Quaternion.identity, new Vector3(1.5f, 0.6f, 0.06f));
-        MakeShowcasePart(boxRoot.transform, PrimitiveType.Cube, redMat,
-            boxPos + new Vector3(0f, 0.3f, -0.37f), Quaternion.identity, new Vector3(1.5f, 0.6f, 0.06f));
-        MakeShowcasePart(boxRoot.transform, PrimitiveType.Cube, redMat,
-            boxPos + new Vector3(-0.72f, 0.3f, 0f), Quaternion.identity, new Vector3(0.06f, 0.6f, 0.8f));
-        MakeShowcasePart(boxRoot.transform, PrimitiveType.Cube, redMat,
-            boxPos + new Vector3(0.72f, 0.3f, 0f), Quaternion.identity, new Vector3(0.06f, 0.6f, 0.8f));
-        MakeShowcasePart(boxRoot.transform, PrimitiveType.Cube, goldMat,
-            boxPos + new Vector3(0f, 0.3f, 0.41f), Quaternion.identity, new Vector3(0.25f, 0.2f, 0.03f));
-
-        var lidPivot = new GameObject("LidPivot");
-        lidPivot.transform.SetParent(boxRoot.transform, false);
-        lidPivot.transform.position = boxPos + new Vector3(0f, 0.62f, -0.4f);
-        MakeShowcasePart(lidPivot.transform, PrimitiveType.Cube, darkRedMat,
-            boxPos + new Vector3(0f, 0.7f, 0f), Quaternion.identity, new Vector3(1.52f, 0.18f, 0.82f));
-        MakeShowcasePart(lidPivot.transform, PrimitiveType.Cube, grayMat,
-            boxPos + new Vector3(0f, 0.85f, 0f), Quaternion.identity, new Vector3(0.6f, 0.14f, 0.22f));
-
-        toolboxAnim = boxRoot.AddComponent<ToolboxAnimator>();
-        toolboxAnim.lidPivot = lidPivot.transform;
-
-        toolboxRT = new RenderTexture(384, 384, 16);
+        toolboxRT = MakeShowcaseRT(1024);
         // camera on the +Z side (clasp faces the player), pulled back and
         // aimed higher so the full lid swing + hovering prize stay in frame
         MakeShowcaseCam(shopShowcaseRoot.transform,
@@ -3838,20 +3859,22 @@ public partial class GameManager : MonoBehaviour
             stack.AddComponent<Coin>().spinSpeed = 30f;
 
             int count = stackCounts[s];
+            float step = TireModel.Width * StackTyreSize + 0.008f;   // one tyre's thickness
             for (int i = 0; i < count; i++)
             {
                 int col = i / 3;
                 int row = i % 3;
                 Vector3 offset = count <= 3
-                    ? new Vector3(0f, row * 0.34f, 0f)
-                    : new Vector3((col - 0.5f) * 1.05f, row * 0.34f, 0f);
+                    ? new Vector3(0f, row * step, 0f)
+                    : new Vector3((col - 0.5f) * 0.97f, row * step, 0f);
                 BuildTireModel(stack.transform, p + offset);
             }
 
-            tireStackRTs[s] = new RenderTexture(256, 256, 16);
-            // farther back (smaller) and aimed low (tires sit higher in frame)
+            tireStackRTs[s] = MakeShowcaseRT(256);
+            // aimed at the middle of the stack, from above and to one side
+            float middle = (Mathf.Min(count, 3) - 1) * step * 0.5f;
             MakeShowcaseCam(shopShowcaseRoot.transform,
-                p + new Vector3(0.7f, 1.2f, -2.6f), p + Vector3.up * 0.1f, tireStackRTs[s]);
+                p + new Vector3(0.7f, middle + 1.1f, -2.6f), p + Vector3.up * middle, tireStackRTs[s]);
         }
 
         // --- coin stacks for the coin packs (1 / 3 / 6 coins)
@@ -3880,45 +3903,19 @@ public partial class GameManager : MonoBehaviour
                 c.transform.rotation = Quaternion.Euler(90f, Random.Range(0f, 360f), 0f);
             }
 
-            coinStackRTs[s] = new RenderTexture(256, 256, 16);
+            coinStackRTs[s] = MakeShowcaseRT(256);
             MakeShowcaseCam(shopShowcaseRoot.transform,
                 p + new Vector3(0.7f, 1.15f, -3.0f), p + Vector3.up * 0.18f, coinStackRTs[s]);
         }
 
-        // --- blue token box (same build, cooler colours)
+        // --- the token box: a neon vault (see PrizeChest)
         Vector3 tbPos = new Vector3(320f, -400f, 0f);
-        var blueMat = new Material(shader) { color = new Color(0.16f, 0.42f, 0.85f) };
-        var darkBlueMat = new Material(shader) { color = new Color(0.1f, 0.28f, 0.6f) };
-        var tokenBox = new GameObject("TokenBox");
-        tokenBox.transform.SetParent(shopShowcaseRoot.transform, false);
-        tokenBox.transform.position = tbPos;
-        tokenBoxRoot = tokenBox;
+        PrizeChest.Rig vault = PrizeChest.Build(PrizeChest.Style.Vault, shopShowcaseRoot.transform, tbPos);
+        tokenBoxRoot = vault.root;
+        tokenBoxAnim = tokenBoxRoot.AddComponent<ToolboxAnimator>();
+        tokenBoxAnim.UseRig(vault);
 
-        MakeShowcasePart(tokenBox.transform, PrimitiveType.Cube, darkBlueMat,
-            tbPos + new Vector3(0f, 0.03f, 0f), Quaternion.identity, new Vector3(1.5f, 0.06f, 0.8f));
-        MakeShowcasePart(tokenBox.transform, PrimitiveType.Cube, blueMat,
-            tbPos + new Vector3(0f, 0.3f, 0.37f), Quaternion.identity, new Vector3(1.5f, 0.6f, 0.06f));
-        MakeShowcasePart(tokenBox.transform, PrimitiveType.Cube, blueMat,
-            tbPos + new Vector3(0f, 0.3f, -0.37f), Quaternion.identity, new Vector3(1.5f, 0.6f, 0.06f));
-        MakeShowcasePart(tokenBox.transform, PrimitiveType.Cube, blueMat,
-            tbPos + new Vector3(-0.72f, 0.3f, 0f), Quaternion.identity, new Vector3(0.06f, 0.6f, 0.8f));
-        MakeShowcasePart(tokenBox.transform, PrimitiveType.Cube, blueMat,
-            tbPos + new Vector3(0.72f, 0.3f, 0f), Quaternion.identity, new Vector3(0.06f, 0.6f, 0.8f));
-        MakeShowcasePart(tokenBox.transform, PrimitiveType.Cube, grayMat,
-            tbPos + new Vector3(0f, 0.3f, 0.41f), Quaternion.identity, new Vector3(0.25f, 0.2f, 0.03f));
-
-        var tbLid = new GameObject("LidPivot");
-        tbLid.transform.SetParent(tokenBox.transform, false);
-        tbLid.transform.position = tbPos + new Vector3(0f, 0.62f, -0.4f);
-        MakeShowcasePart(tbLid.transform, PrimitiveType.Cube, darkBlueMat,
-            tbPos + new Vector3(0f, 0.7f, 0f), Quaternion.identity, new Vector3(1.52f, 0.18f, 0.82f));
-        MakeShowcasePart(tbLid.transform, PrimitiveType.Cube, grayMat,
-            tbPos + new Vector3(0f, 0.85f, 0f), Quaternion.identity, new Vector3(0.6f, 0.14f, 0.22f));
-
-        tokenBoxAnim = tokenBox.AddComponent<ToolboxAnimator>();
-        tokenBoxAnim.lidPivot = tbLid.transform;
-
-        tokenBoxRT = new RenderTexture(384, 384, 16);
+        tokenBoxRT = MakeShowcaseRT(1024);
         MakeShowcaseCam(shopShowcaseRoot.transform,
             tbPos + new Vector3(0f, 1.9f, 3.2f), tbPos + Vector3.up * 0.75f, tokenBoxRT);
 
@@ -3927,19 +3924,6 @@ public partial class GameManager : MonoBehaviour
 
         SetLayerRecursively(shopShowcaseRoot, ShowcaseLayer);
         shopShowcaseRoot.SetActive(false);
-    }
-
-    GameObject MakeShowcasePart(Transform parent, PrimitiveType prim, Material mat,
-        Vector3 pos, Quaternion rot, Vector3 scale)
-    {
-        GameObject go = GameObject.CreatePrimitive(prim);
-        Destroy(go.GetComponent<Collider>());
-        go.transform.SetParent(parent, false);
-        go.transform.position = pos;
-        go.transform.rotation = rot;
-        go.transform.localScale = scale;
-        go.GetComponent<MeshRenderer>().sharedMaterial = mat;
-        return go;
     }
 
     void OpenShop()
@@ -4033,6 +4017,52 @@ public partial class GameManager : MonoBehaviour
         boxResultText.color = new Color(0.6f, 1f, 0.7f);
         audioMan.PlayPowerUp();
         RefreshShopCurrency();
+    }
+
+    /// <summary>
+    /// Mystery boxes picked up on the road, waiting to be opened. They are
+    /// opened after the run, one after the other, in the shop's own box
+    /// screen - first thing after MENU on the results. Kept in the save, so
+    /// none is lost if the game is closed before they are opened.
+    /// </summary>
+    int RoadBoxesWaiting
+    {
+        get { return PlayerPrefs.GetInt("RoadBoxes", 0); }
+        set { PlayerPrefs.SetInt("RoadBoxes", Mathf.Max(0, value)); }
+    }
+
+    /// <summary>A box from the road is open on screen; closing its prize carries on.</summary>
+    bool roadBoxOpening;
+
+    /// <summary>A mystery box picked up on the road: it is kept for after the run.</summary>
+    void CollectRoadBox()
+    {
+        RoadBoxesWaiting = RoadBoxesWaiting + 1;
+        FlashBonus("+1 " + Loc.T("MYSTERY BOX") + "!", new Color(1f, 0.8f, 0.25f));
+        audioMan.PlayPowerUp();
+        if (camFollow != null) camFollow.Shake(0.08f);
+    }
+
+    /// <summary>
+    /// Opens the next box from the road - free, drawn on the same prize table
+    /// as the shop's box and the ODDS screen, in the same full-screen box.
+    /// </summary>
+    void OpenRoadBox()
+    {
+        if (RoadBoxesWaiting <= 0) return;
+        RoadBoxesWaiting = RoadBoxesWaiting - 1;
+        PlayerPrefs.Save();
+        roadBoxOpening = true;
+        OpenMysteryBox();
+    }
+
+    /// <summary>Once a road box's prize is closed: the next box, or on with the results.</summary>
+    void AfterRoadBox()
+    {
+        roadBoxOpening = false;
+        RefreshGoMenuButton();
+        if (state == State.GameOver) ResultsMenu();
+        else if (RoadBoxesWaiting > 0) OpenRoadBox();
     }
 
     void BuyMysteryBox()
@@ -4259,25 +4289,144 @@ public partial class GameManager : MonoBehaviour
     float revealT = -1f;
     Color revealTint;
 
-    /// <summary>Sunburst used behind a prize.</summary>
+    /// <summary>How much further down the shop runs now its boxes are big.</summary>
+    const float ShopBoxGrow = 440f;
+
+    /// <summary>
+    /// What makes each of the shop's boxes stand out: a soft glow behind it
+    /// that breathes, a pool of light on the floor under it, and sparkles
+    /// that wink in and out round it, one after another.
+    /// </summary>
+    class BoxStage
+    {
+        public RawImage glow, floor;
+        public RectTransform[] sparks;
+        public Color colour;
+    }
+
+    readonly BoxStage[] shopStages = new BoxStage[2];
+
+    /// <param name="centre">where the box itself sits in the window</param>
+    /// <param name="floorY">where the bottom of the box is</param>
+    BoxStage MakeBoxStage(Transform parent, Vector2 centre, float floorY, Color colour)
+    {
+        var stage = new BoxStage { colour = colour, sparks = new RectTransform[6] };
+        // each piece goes in straight after the window's card, so they end up
+        // behind everything on it - the floor furthest back, the sparkles in
+        // front of the glow
+        for (int i = 0; i < stage.sparks.Length; i++)
+        {
+            // round the box on a wide oval, never over its middle
+            float a = (i + 0.5f) / stage.sparks.Length * Mathf.PI * 2f + 0.4f;
+            Vector2 at = centre + new Vector2(Mathf.Cos(a) * 290f, Mathf.Sin(a) * 205f + 20f);
+            var img = MakeStageImage(parent, "BoxSparkle", GetGlintTexture(), at,
+                new Vector2(70f, 70f), Color.Lerp(colour, Color.white, 0.65f));
+            stage.sparks[i] = img.rectTransform;
+        }
+        stage.glow = MakeStageImage(parent, "BoxGlow", GetSoftDotTexture(),
+            centre, new Vector2(700f, 640f), colour);
+        stage.floor = MakeStageImage(parent, "BoxFloor", GetSoftDotTexture(),
+            new Vector2(centre.x, floorY + 6f), new Vector2(560f, 130f), colour);
+        return stage;
+    }
+
+    static RawImage MakeStageImage(Transform parent, string name, Texture tex, Vector2 at, Vector2 size, Color colour)
+    {
+        var go = new GameObject(name);
+        go.transform.SetParent(parent, false);
+        go.transform.SetSiblingIndex(Mathf.Min(1, parent.childCount - 1));
+        var img = go.AddComponent<RawImage>();
+        img.texture = tex;
+        img.color = colour;
+        img.raycastTarget = false;
+        var rt = img.rectTransform;
+        rt.anchorMin = rt.anchorMax = rt.pivot = new Vector2(0.5f, 0.5f);
+        rt.anchoredPosition = at;
+        rt.sizeDelta = size;
+        return img;
+    }
+
+    /// <summary>The shop's boxes: the glow breathes, the floor light pulses, the sparkles wink.</summary>
+    void TickShopStages()
+    {
+        float t = Time.unscaledTime;
+        for (int s = 0; s < shopStages.Length; s++)
+        {
+            var st = shopStages[s];
+            if (st == null) continue;
+            float beat = 0.5f + 0.5f * Mathf.Sin(t * 2.2f + s * 1.3f);
+            Color c = st.colour;
+            st.glow.color = new Color(c.r, c.g, c.b, 0.30f + 0.22f * beat);
+            st.glow.rectTransform.localScale = Vector3.one * (0.94f + 0.08f * beat);
+            st.floor.color = new Color(c.r, c.g, c.b, 0.45f + 0.25f * beat);
+            for (int i = 0; i < st.sparks.Length; i++)
+            {
+                float k = (Mathf.Repeat(t + i * 0.45f + s * 0.2f, 2.7f)) / 0.8f;
+                float pop = k < 1f ? Mathf.Sin(k * Mathf.PI) : 0f;
+                st.sparks[i].localScale = Vector3.one * pop;
+                st.sparks[i].localRotation = Quaternion.Euler(0f, 0f, k * 70f);
+            }
+        }
+    }
+
+    static Texture2D softDotTexture;
+
+    /// <summary>A soft round light, brightest in the middle and gone at the edge.</summary>
+    static Texture2D GetSoftDotTexture()
+    {
+        if (softDotTexture != null) return softDotTexture;
+        const int S = 128;
+        var tex = new Texture2D(S, S, TextureFormat.RGBA32, true);
+        var px = new Color32[S * S];
+        float c = (S - 1) * 0.5f;
+        for (int y = 0; y < S; y++)
+        {
+            for (int x = 0; x < S; x++)
+            {
+                float dx = (x - c) / c, dy = (y - c) / c;
+                float e = Mathf.Clamp01(1f - Mathf.Sqrt(dx * dx + dy * dy));
+                float a = e * e * (3f - 2f * e);
+                px[y * S + x] = new Color32(255, 255, 255, (byte)Mathf.RoundToInt(a * 255f));
+            }
+        }
+        tex.SetPixels32(px);
+        tex.Apply(true);
+        tex.wrapMode = TextureWrapMode.Clamp;
+        tex.filterMode = FilterMode.Trilinear;
+        softDotTexture = tex;
+        return tex;
+    }
+
+    /// <summary>
+    /// Sunburst used behind a prize. It is shown huge (up to 1900 units across)
+    /// and turns slowly, so it is made at 768 pixels with the edge of every ray
+    /// anti-aliased - stepped edges are what made it look pixelated.
+    /// </summary>
     static Texture2D MakeRaysTexture(int spokes)
     {
-        const int S = 256;
+        const int S = 768;
         var tex = new Texture2D(S, S, TextureFormat.RGBA32, false);
+        var px = new Color32[S * S];
         float half = (S - 1) * 0.5f;
+        float period = Mathf.PI * 2f / spokes;      // one lit ray and one gap
         for (int y = 0; y < S; y++)
         {
             for (int x = 0; x < S; x++)
             {
                 float dx = (x - half) / half, dy = (y - half) / half;
                 float r = Mathf.Sqrt(dx * dx + dy * dy);
-                float ang = Mathf.Atan2(dy, dx) * Mathf.Rad2Deg + 180f;
-                bool lit = ((int)(ang / (360f / (spokes * 2)))) % 2 == 0;
                 float fade = Mathf.Clamp01(1f - Mathf.Abs(r - 0.55f) / 0.75f);
-                float a = lit ? fade * 0.85f : 0f;
-                tex.SetPixel(x, y, new Color(1f, 1f, 1f, a));
+                if (fade <= 0f) { px[y * S + x] = new Color32(255, 255, 255, 0); continue; }
+
+                // how far, in pixels, this point is inside the nearest ray
+                float ang = Mathf.Atan2(dy, dx) + Mathf.PI;
+                float fromMiddle = Mathf.Repeat(ang - period * 0.25f + period * 0.5f, period) - period * 0.5f;
+                float inside = (period * 0.25f - Mathf.Abs(fromMiddle)) * r * half;
+                float a = Mathf.Clamp01(inside + 0.5f) * fade * 0.85f;
+                px[y * S + x] = new Color32(255, 255, 255, (byte)Mathf.RoundToInt(a * 255f));
             }
         }
+        tex.SetPixels32(px);
         tex.Apply();
         tex.wrapMode = TextureWrapMode.Clamp;
         return tex;
@@ -4414,6 +4563,8 @@ public partial class GameManager : MonoBehaviour
         if (shopShowcaseRoot != null && (shopPanel == null || !shopPanel.activeSelf))
             shopShowcaseRoot.SetActive(false);
         audioMan.PlayTap();
+        // a box from the road: the next one, or on with the results
+        if (roadBoxOpening) AfterRoadBox();
     }
 
     void BuyTokenBox()
@@ -4514,8 +4665,15 @@ public partial class GameManager : MonoBehaviour
     /// <summary>A tire pack button: the store takes it from here (see GrantPurchase).</summary>
     void BuyTirePack(int pack)
     {
+        if (purchaseWaitT >= 0f) return;      // one purchase at a time
         if (audioMan != null) audioMan.PlayTap();
+        // The store's sheet can take a while to come up. Until it answers,
+        // the pack is greyed and the whole game is frozen under a spinner,
+        // so nothing can be tapped twice or behind it. (Started before the
+        // store is asked: in the editor it answers straight away.)
+        BeginPurchaseWait(pack);
         if (IapStore.Buy(IapStore.TirePackIds[pack])) return;
+        EndPurchaseWait();
 
         // The store has not sent the packs yet (no connection, or still
         // connecting). Never a dead button: the pack says so for a moment -
@@ -4546,6 +4704,7 @@ public partial class GameManager : MonoBehaviour
         tires += amount;
         PlayerPrefs.SetInt("Tires", tires);
         PlayerPrefs.Save();
+        SaveBackup.Write();     // paid for: into the reinstall copy at once
         if (boxResultText != null)
         {
             boxResultText.text = Loc.F("+{0} TIRES!", amount);
@@ -4555,6 +4714,158 @@ public partial class GameManager : MonoBehaviour
         if (audioMan != null) audioMan.PlayCoin();
     }
 
+    /// <summary>
+    /// A tire pack is set in the small-text font like every other button -
+    /// unless the store's price has a sign that font cannot write (rupees,
+    /// won, lira...), when it falls back to Unity's own font, which borrows
+    /// the phone's fonts so the price always shows.
+    /// </summary>
+    void SetPackFont(Text label, string price)
+    {
+        bool own = Loc.PlainFontFor(Loc.Current) == null && SmallFont != null;
+        if (own)
+        {
+            foreach (char ch in price)
+            {
+                if (!char.IsWhiteSpace(ch) && !SmallFont.HasCharacter(ch)) { own = false; break; }
+            }
+        }
+        Font f = own ? SmallFont : Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+        if (label.font == f) return;
+        label.font = f;
+        label.fontStyle = own ? FontStyle.Normal : FontStyle.Bold;
+        label.fontSize = TextSize(Mathf.RoundToInt(52 * ButtonTextScale), true, f);
+    }
+
+    // ------------------------------------------------ waiting on the store
+
+    GameObject purchaseBlocker;
+    RectTransform purchaseSpinner;
+    float purchaseWaitT = -1f;        // seconds waited; -1 = not waiting
+    int purchasePack = -1;
+    Color purchasePackColour;
+
+    /// <summary>Give up waiting after this long - the purchase is still handed out if it arrives later.</summary>
+    const float PurchaseWaitLimit = 120f;
+
+    /// <summary>
+    /// The freeze while the store works: a dim over everything, on its own
+    /// canvas above every screen, that swallows every tap, with a spinner.
+    /// No words, so it reads the same in every language.
+    /// </summary>
+    void BuildPurchaseBlocker()
+    {
+        purchaseBlocker = new GameObject("PurchaseWait");
+        purchaseBlocker.transform.SetParent(uiRootCanvas, false);
+        var rt = purchaseBlocker.AddComponent<RectTransform>();
+        rt.anchorMin = Vector2.zero;
+        rt.anchorMax = Vector2.one;
+        rt.offsetMin = new Vector2(-400f, -600f);
+        rt.offsetMax = new Vector2(400f, 600f);
+        var canvas = purchaseBlocker.AddComponent<Canvas>();
+        canvas.overrideSorting = true;
+        canvas.sortingOrder = 900;
+        purchaseBlocker.AddComponent<GraphicRaycaster>();
+        var dim = purchaseBlocker.AddComponent<Image>();
+        dim.color = new Color(0f, 0f, 0f, 0.45f);
+        dim.raycastTarget = true;
+
+        var spinGo = new GameObject("Spinner");
+        spinGo.transform.SetParent(purchaseBlocker.transform, false);
+        var spin = spinGo.AddComponent<RawImage>();
+        spin.texture = GetSpinnerTexture();
+        spin.raycastTarget = false;
+        purchaseSpinner = spin.rectTransform;
+        purchaseSpinner.anchorMin = purchaseSpinner.anchorMax = purchaseSpinner.pivot = new Vector2(0.5f, 0.5f);
+        purchaseSpinner.anchoredPosition = Vector2.zero;
+        purchaseSpinner.sizeDelta = new Vector2(180f, 180f);
+
+        var tyre = MakeMenuIcon(purchaseBlocker.transform, TireIconPath, Vector2.zero, 104f);
+        tyre.raycastTarget = false;
+        purchaseBlocker.SetActive(false);
+    }
+
+    static Texture2D spinnerTexture;
+
+    /// <summary>A ring that fades round from bright to nothing - turned, it spins.</summary>
+    static Texture2D GetSpinnerTexture()
+    {
+        if (spinnerTexture != null) return spinnerTexture;
+        const int S = 128;
+        var tex = new Texture2D(S, S, TextureFormat.RGBA32, true);
+        var px = new Color32[S * S];
+        float c = (S - 1) * 0.5f;
+        for (int y = 0; y < S; y++)
+        {
+            for (int x = 0; x < S; x++)
+            {
+                float dx = x - c, dy = y - c;
+                float r = Mathf.Sqrt(dx * dx + dy * dy) / c;
+                float ring = Mathf.Clamp01((0.12f - Mathf.Abs(r - 0.82f)) * 40f);
+                float round = (Mathf.Atan2(dy, dx) / (Mathf.PI * 2f) + 1f) % 1f;   // 0-1 round the ring
+                px[y * S + x] = new Color32(255, 214, 77, (byte)Mathf.RoundToInt(ring * round * 255f));
+            }
+        }
+        tex.SetPixels32(px);
+        tex.Apply(true);
+        tex.wrapMode = TextureWrapMode.Clamp;
+        tex.filterMode = FilterMode.Trilinear;
+        spinnerTexture = tex;
+        return tex;
+    }
+
+    void BeginPurchaseWait(int pack)
+    {
+        if (purchaseBlocker == null) BuildPurchaseBlocker();
+        purchaseWaitT = 0f;
+        purchasePack = pack;
+        // the pack pressed goes grey
+        if (pack >= 0 && pack < packLabels.Length && packLabels[pack] != null)
+        {
+            var img = packLabels[pack].transform.parent.GetComponent<Image>();
+            if (img != null)
+            {
+                purchasePackColour = img.color;
+                img.color = LockedGrey;
+            }
+            Color c = packLabels[pack].color;
+            packLabels[pack].color = new Color(c.r, c.g, c.b, 0.55f);
+        }
+        purchaseBlocker.SetActive(true);
+        purchaseBlocker.transform.SetAsLastSibling();
+    }
+
+    void EndPurchaseWait()
+    {
+        if (purchaseWaitT < 0f) return;
+        purchaseWaitT = -1f;
+        if (purchasePack >= 0 && purchasePack < packLabels.Length && packLabels[purchasePack] != null)
+        {
+            var img = packLabels[purchasePack].transform.parent.GetComponent<Image>();
+            if (img != null) img.color = purchasePackColour;
+            Color c = packLabels[purchasePack].color;
+            packLabels[purchasePack].color = new Color(c.r, c.g, c.b, 1f);
+        }
+        purchasePack = -1;
+        if (purchaseBlocker != null) purchaseBlocker.SetActive(false);
+    }
+
+    /// <summary>The store has answered: bought, or not (cancelled, declined, failed, or waiting on a parent).</summary>
+    void OnPurchaseEnded(bool bought)
+    {
+        EndPurchaseWait();
+    }
+
+    void TickPurchaseWait()
+    {
+        if (purchaseWaitT < 0f) return;
+        purchaseWaitT += Time.unscaledDeltaTime;
+        if (purchaseSpinner != null)
+            purchaseSpinner.localRotation = Quaternion.Euler(0f, 0f, -purchaseWaitT * 300f);
+        // never frozen for good, whatever the store does
+        if (purchaseWaitT > PurchaseWaitLimit) EndPurchaseWait();
+    }
+
     /// <summary>Writes each pack's tires and price - the store's price once it has sent them.</summary>
     void RefreshPackPrices()
     {
@@ -4562,7 +4873,9 @@ public partial class GameManager : MonoBehaviour
         {
             if (packLabels[i] == null) continue;
             string price = IapStore.PriceFor(IapStore.TirePackIds[i], PackFallbackPrices[i]);
-            packLabels[i].text = PackTires[i] + "\n<size=" + PackPriceSize + ">" + price + "</size>";
+            SetPackFont(packLabels[i], price);
+            packLabels[i].text = PackTires[i] + "\n<size=" + RichSize(PackPriceSize, packLabels[i], 1.12f) + ">"
+                                 + price + "</size>";
         }
     }
 
@@ -4572,6 +4885,7 @@ public partial class GameManager : MonoBehaviour
         // so it must stop talking to this copy of the game
         if (IapStore.GrantHandler == (System.Action<string>)GrantPurchase) IapStore.GrantHandler = null;
         IapStore.PricesChanged -= RefreshPackPrices;
+        IapStore.PurchaseEnded -= OnPurchaseEnded;
     }
 
     void OpenGarage()
@@ -4637,7 +4951,7 @@ public partial class GameManager : MonoBehaviour
         SetLayerRecursively(garageStage, ShowcaseLayer);
         if (mainCam != null) mainCam.cullingMask &= ~(1 << ShowcaseLayer);
 
-        garageCarRT = new RenderTexture(640, 640, 16);
+        garageCarRT = MakeShowcaseRT(1024);
         MakeShowcaseCam(garageStage.transform,
             GarageStagePos + new Vector3(2.6f, 1.5f, -4.6f), GarageStagePos, garageCarRT);
     }
@@ -5852,6 +6166,7 @@ public partial class GameManager : MonoBehaviour
             if (!openingUp)
             {
                 introRunning = false;
+                if (uiGroup != null) uiGroup.alpha = 1f;
                 if (menuTitle != null) menuTitle.gameObject.SetActive(true);
                 if (menuSubTitle != null) menuSubTitle.gameObject.SetActive(true);
                 SetMenuTitleAlpha(1f);
@@ -5860,6 +6175,10 @@ public partial class GameManager : MonoBehaviour
             }
             else
             {
+                // The opening plays over the 3D scene, so the game's own UI
+                // stays hidden behind it and fades up as the name settles.
+                if (uiGroup != null) uiGroup.alpha = intro != null ? intro.LobbyReveal : 0f;
+
                 // The intro's name lands exactly on the lobby title, so the
                 // real title switches on underneath while the intro is still
                 // drawn. Before that moment the lobby stays hidden.
@@ -5885,11 +6204,13 @@ public partial class GameManager : MonoBehaviour
         }
 
         AnimateBonus();
+        TickPurchaseWait();
         TickBoxReveal();
         TickCoach();          // the tutorial (GameManager.Tutorial.cs)
 
         // corner currency counters stay current in every state
         if (persistentCoinsText != null) RefreshCornerCounters();
+        TickScreenTitles();   // the light across the screen titles (GameManager.Menu.cs)
 
 
         switch (state)
@@ -5897,12 +6218,14 @@ public partial class GameManager : MonoBehaviour
             case State.Menu:
                 TickLobbyDrive();
                 TickWheel();
+                TickMenu();           // the lobby's motion (GameManager.Menu.cs)
                 if (menuPanel.activeSelf)
                 {
                     AnimateSpinButton();
                     AnimateLoginButton();
                 }
                 TickLoginPopup();
+                if (shopPanel != null && shopPanel.activeSelf) TickShopStages();
                 break;
 
             case State.Playing:
@@ -5964,6 +6287,15 @@ public partial class GameManager : MonoBehaviour
     }
 
     /// <summary>Draws one draining bar per active item, stacked from the bottom.</summary>
+    /// <summary>Size of an item's timer bar - narrow enough to stay clear of the rival line.</summary>
+    static readonly Vector2 ItemBarSize = new Vector2(214f, 50f);
+
+    /// <summary>Where an item's timer bar sits: down the top-left corner, under the score multiplier.</summary>
+    static Vector2 ItemBarPos(int slot)
+    {
+        return new Vector2(CounterEdge, -160f - slot * 58f);
+    }
+
     void UpdateItemBars()
     {
         float[] remaining = { invincibleT, doubleCoinsT, magnetT, doubleScoreT, springsT };
@@ -5976,7 +6308,7 @@ public partial class GameManager : MonoBehaviour
             GameObject bar = itemBarRoots[slot];
             if (!bar.activeSelf) bar.SetActive(true);
             var rt = (RectTransform)bar.transform;
-            rt.anchoredPosition = new Vector2(0f, 60f + slot * 62f);
+            rt.anchoredPosition = ItemBarPos(slot);
 
             float frac = Mathf.Clamp01(remaining[i] / ItemDurations[i]);
             itemBarFills[slot].fillAmount = frac;
@@ -6096,6 +6428,12 @@ public partial class GameManager : MonoBehaviour
             PlayerPrefs.SetInt("Tires", tires);
             FlashBonus("+1 TIRE!", new Color(0.7f, 0.9f, 1f));
             audioMan.PlayCoin();
+        }
+
+        // rarer still: a mystery box, opened on the spot
+        if (track.TryCollectBox(car.DistanceTraveled, car.LateralOffset, car.carRadius))
+        {
+            CollectRoadBox();
         }
 
         // magnet visibly drags nearby coins toward the car
@@ -6318,6 +6656,9 @@ public partial class GameManager : MonoBehaviour
         var scaler = canvasGo.AddComponent<CanvasScaler>();
         uiCanvasRt = (RectTransform)canvasGo.transform;
         ApplyUiScaling(scaler);
+        // hidden until the opening title hands over (see Update)
+        uiGroup = canvasGo.AddComponent<CanvasGroup>();
+        uiGroup.alpha = introRunning ? 0f : 1f;
 
         // everything lives inside the device safe area (iPhone notch etc.)
         var safeGo = new GameObject("SafeArea");
@@ -6358,15 +6699,16 @@ public partial class GameManager : MonoBehaviour
         itemHudText.color = new Color(1f, 1f, 1f, 0.9f);
         itemHudText.gameObject.SetActive(false); // replaced by the bars below
 
-        // --- active item timer bars, stacked at the bottom of the screen
+        // --- active item timer bars, stacked down the top-left corner under
+        // the coins: at the bottom of the screen the steering thumb hid them
         for (int i = 0; i < ItemSlots; i++)
         {
             var rootGo = new GameObject("ItemBar" + i);
             rootGo.transform.SetParent(uiRoot, false);
             var rt = rootGo.AddComponent<RectTransform>();
-            rt.anchorMin = rt.anchorMax = rt.pivot = new Vector2(0.5f, 0f);
-            rt.anchoredPosition = new Vector2(0f, 60f + i * 62f);
-            rt.sizeDelta = new Vector2(520f, 52f);
+            rt.anchorMin = rt.anchorMax = rt.pivot = new Vector2(0f, 1f);
+            rt.anchoredPosition = ItemBarPos(i);
+            rt.sizeDelta = ItemBarSize;
 
             var bg = new GameObject("BG");
             bg.transform.SetParent(rootGo.transform, false);
@@ -6395,9 +6737,10 @@ public partial class GameManager : MonoBehaviour
             fRt.offsetMax = new Vector2(-5f, -5f);
             itemBarFills[i] = fillImg;
 
-            var label = MakeText(rootGo.transform, "Label", 28, TextAnchor.MiddleCenter,
-                new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(500f, 52f));
+            var label = MakeText(rootGo.transform, "Label", 30, TextAnchor.MiddleCenter,
+                new Vector2(0.5f, 0.5f), Vector2.zero, ItemBarSize - new Vector2(16f, 0f));
             label.color = Color.white;
+            if (label is LocText fitBar) fitBar.fitInEnglish = true;
             itemBarLabels[i] = label;
 
             itemBarRoots[i] = rootGo;
@@ -6407,6 +6750,9 @@ public partial class GameManager : MonoBehaviour
             new Vector2(0.5f, 0.5f), new Vector2(0f, -420f), new Vector2(500f, 70f));
         driftText.text = "DRIFT x1";
         driftText.color = Color.white;
+        // the drift multiplier keeps the game's racing lettering (where the
+        // language is written in it)
+        if (Loc.DisplayFontFor(Loc.Current) == null) KeepGameFont(driftText, 46);
         driftText.gameObject.SetActive(false);
         bonusText = MakeText(uiRoot, "Bonus", 46, TextAnchor.MiddleCenter,
             new Vector2(0.5f, 0.5f), new Vector2(0f, 300f), new Vector2(800f, 80f));
@@ -6427,39 +6773,62 @@ public partial class GameManager : MonoBehaviour
         }
 
         // --- main menu
+        // The lobby is built round the car. The camera lifts it into the
+        // middle of the screen (CameraFollow.lobbyLift), the name and the
+        // scores sit above it, and everything to press sits below it - PLAY,
+        // RACE, and a row of picture tiles for the rest - so the car is never
+        // hidden behind the buttons.
         menuPanel = MakePanel(uiRoot, "MenuPanel");
+        // shade down from the top and up from the bottom, so the name and the
+        // buttons stand out against the bright sky and road
+        MakeMenuShade(menuPanel.transform, true);
+        MakeMenuShade(menuPanel.transform, false);
+
         var title = MakeText(menuPanel.transform, "Title", 96, TextAnchor.MiddleCenter,
-            new Vector2(0.5f, 0.5f), new Vector2(0f, 420f), new Vector2(1040f, 150f));
+            new Vector2(0.5f, 0.5f), new Vector2(0f, MenuTitleY), new Vector2(1040f, 150f));
         title.text = "DRIFTLINE";
         KeepGameFont(title, 96);
         menuTitle = title;
         title.color = new Color(1f, 0.72f, 0.12f); // sunny arcade orange
         title.transform.localRotation = Quaternion.Euler(0f, 0f, 2.5f); // playful tilt
+        // gold, like the opening title it is where that lands, with a light
+        // running over it now and then
+        menuTitleGleam = AddTitleGleam(title, new Color(1f, 0.94f, 0.58f), new Color(1f, 0.55f, 0.05f), 2.6f);
 
         // second line of the name, sitting under the big word
         menuSubTitle = MakeText(menuPanel.transform, "TitleSub", 50, TextAnchor.MiddleCenter,
-            new Vector2(0.5f, 0.5f), new Vector2(0f, 345f), new Vector2(1040f, 80f));
+            new Vector2(0.5f, 0.5f), new Vector2(0f, MenuTitleY - 75f), new Vector2(1040f, 80f));
         menuSubTitle.text = "ETERNAL";
         KeepGameFont(menuSubTitle, 50);
         menuSubTitle.color = new Color(1f, 0.86f, 0.45f);
         menuSubTitle.transform.localRotation = Quaternion.Euler(0f, 0f, 2.5f);
+        menuSubGleam = AddTitleGleam(menuSubTitle, new Color(1f, 0.97f, 0.80f), new Color(1f, 0.74f, 0.30f), 2f);
+        LobbyTitleText = title;
+        LobbySubTitleText = menuSubTitle;
         // hidden dev unlock: tap the title 15 times for a password prompt.
         // TODO remove (or keep as an easter egg) before shipping!
         title.raycastTarget = true;
         var titleBtn = title.gameObject.AddComponent<Button>();
         titleBtn.transition = Selectable.Transition.None;
         titleBtn.onClick.AddListener(TitleTapped);
-        menuBestText = MakeText(menuPanel.transform, "MenuBest", 52, TextAnchor.MiddleCenter,
-            new Vector2(0.5f, 0.5f), new Vector2(0f, 250f), new Vector2(700f, 80f));
-        menuBestText.color = new Color(1f, 0.8f, 0.3f);
+
+        // the best score, on a dark pill with a trophy at its end
+        var bestPill = MakeCard(menuPanel.transform, new Vector2(0f, MenuBestY), new Vector2(660f, 96f),
+            new Color(0.05f, 0.04f, 0.09f, 0.74f));
+        menuBestPill = bestPill.rectTransform;
+        MakeMenuIcon(bestPill.transform, TrophyIconPath, new Vector2(-284f, 6f), 112f);
+        menuBestText = MakeText(bestPill.transform, "MenuBest", 52, TextAnchor.MiddleCenter,
+            new Vector2(0.5f, 0.5f), new Vector2(34f, 0f), new Vector2(MenuBestRoom, 90f));
+        menuBestText.color = new Color(1f, 0.82f, 0.3f);
         // the week's best, under the all-time one - tap it for the ranking
         // (the coins already have their own counter in the corner)
         BuildWeeklyMenuButton(menuPanel.transform);
-        // PLAY stands alone; everything else sits in a tidy two-column block
-        // underneath, so the menu is not one long stack of identical bars.
-        playButtonGo = MakeButton(menuPanel.transform, "PLAY", 64,
-            new Vector2(0f, 30f), new Vector2(600f, 150f), PlayPressed, GoGreen)
+
+        // PLAY: big, green, glowing, with a light sweeping across it
+        playButtonGo = MakeButton(menuPanel.transform, "PLAY", 72,
+            new Vector2(0f, MenuPlayY), MenuPlaySize, PlayPressed, GoGreen)
             .transform.parent.gameObject;
+        DressPlayButton(playButtonGo);
 
         // Build number, bottom right. The panel bleeds past the safe area, so
         // a corner-anchored label has to come back in by the same amount or it
@@ -6474,31 +6843,27 @@ public partial class GameManager : MonoBehaviour
 
         // RACE is the second big button, straight under PLAY, on a
         // chequered flag
-        raceButtonGo = ButtonOf(MakeRaceButton(menuPanel.transform, new Vector2(0f, -137f),
-            new Vector2(600f, 140f)).transform);
+        raceButtonGo = ButtonOf(MakeRaceButton(menuPanel.transform, new Vector2(0f, MenuRaceY),
+            new Vector2(620f, 140f)).transform);
 
-        const float ColX = 152f;
-        const float RowTop = -289f;
-        const float RowStep = 128f;
-        Vector2 small = new Vector2(292f, 112f);
-        // the game's own lettering is wide, so it is set smaller than the
-        // other scripts' fonts to sit in these buttons with room to spare
-        int smallText = Loc.DisplayFontFor(Loc.Current) == null ? 38 : 44;
-
-        spinMenuLabel = MakeButton(menuPanel.transform, "SPIN", smallText,
-            new Vector2(-ColX, RowTop), small, OpenWheel,
-            new Color(1f, 0.78f, 0.12f));
+        // everything else: a row of picture tiles along the bottom
+        spinMenuLabel = MakeMenuTile(0, "SPIN", "UI/icon_menu_spin",
+            new Color(1f, 0.78f, 0.12f), OpenWheel);
         spinBadge = MakeBadge(spinMenuLabel.transform.parent);
-        garageButtonGo = MakeButton(menuPanel.transform, "GARAGE", smallText,
-            new Vector2(ColX, RowTop), small, OpenGarage).transform.parent.gameObject;
-
-        shopButtonGo = MakeButton(menuPanel.transform, "SHOP", smallText,
-            new Vector2(-ColX, RowTop - RowStep), small, OpenShop).transform.parent.gameObject;
-        questsButtonGo = MakeButton(menuPanel.transform, "QUESTS", smallText,
-            new Vector2(ColX, RowTop - RowStep), small, OpenQuests).transform.parent.gameObject;
-        // SPIN is drawn after its neighbours: when it bounces, its red dot
-        // swings a little over GARAGE and should pass over it, not under it
-        spinMenuLabel.transform.parent.SetAsLastSibling();
+        garageButtonGo = MakeMenuTile(1, "GARAGE", "UI/icon_menu_garage",
+            GarageTileBlue, OpenGarage).transform.parent.gameObject;
+        shopButtonGo = MakeMenuTile(2, "SHOP", "UI/icon_menu_shop",
+            ShopTilePurple, OpenShop).transform.parent.gameObject;
+        questsButtonGo = MakeMenuTile(3, "QUESTS", "UI/icon_menu_quests",
+            QuestTileGreen, OpenQuests).transform.parent.gameObject;
+        // LOGIN STREAK: lively and dotted while today's reward waits, like
+        // SPIN while a spin does
+        loginMenuLabel = MakeMenuTile(4, "LOGIN STREAK", "UI/icon_menu_login",
+            LoginTileLive, OpenLoginStreak);
+        loginButtonGo = loginMenuLabel.transform.parent.gameObject;
+        loginButtonRt = loginButtonGo.transform as RectTransform;
+        loginButtonHome = loginButtonRt.anchoredPosition;
+        loginBadge = MakeBadge(loginButtonGo.transform);
 
         // settings: a gear in the bottom-left corner, mirroring the version
         // number in the bottom-right (and brought back in by the panel's
@@ -6506,18 +6871,6 @@ public partial class GameManager : MonoBehaviour
         settingsButtonGo = MakeIconButton(menuPanel.transform, SettingsIconPath, "SETTINGS",
             new Vector2(0f, 0f), new Vector2(40f + PanelBleed.x, 34f + PanelBleed.y),
             new Vector2(128f, 128f), OpenSettings).gameObject;
-        // LOGIN STREAK: a third row, as wide as the two buttons above it and
-        // as tall as one, yellow and bouncing with a red dot like SPIN while
-        // today's reward is still to collect
-        loginMenuLabel = MakeButton(menuPanel.transform, "LOGIN STREAK", smallText,
-            new Vector2(0f, RowTop - 2f * RowStep), new Vector2(ColX * 2f + small.x, small.y),
-            OpenLoginStreak, LoginYellow);
-        loginButtonGo = loginMenuLabel.transform.parent.gameObject;
-        loginButtonRt = loginButtonGo.transform as RectTransform;
-        loginButtonHome = loginButtonRt.anchoredPosition;
-        loginBadge = MakeBadge(loginButtonGo.transform);
-        // SPIN stays on top: its dot swings over its neighbours when it bounces
-        spinMenuLabel.transform.parent.SetAsLastSibling();
 
         // --- settings
         settingsPanel = MakePanel(uiRoot, "SettingsPanel");
@@ -6527,6 +6880,7 @@ public partial class GameManager : MonoBehaviour
             new Vector2(0.5f, 0.5f), new Vector2(0f, 640f), new Vector2(800f, 120f));
         sTitle.text = "SETTINGS";
         sTitle.color = new Color(1f, 0.72f, 0.12f);
+        StyleScreenTitle(sTitle, SettingsIconPath);
 
         // three sections rather than one long column of sliders
         // four tabs across the card; a long word shrinks to fit its tab
@@ -6603,6 +6957,7 @@ public partial class GameManager : MonoBehaviour
             new Vector2(0.5f, 0.5f), new Vector2(0f, 470f), new Vector2(900f, 110f));
         cTitle.text = "CREDITS";
         cTitle.color = new Color(1f, 0.72f, 0.12f);
+        StyleScreenTitle(cTitle, null);
 
         string credits = CreditsText;
         // plain font: readable at small sizes, unlike the display font
@@ -6636,6 +6991,7 @@ public partial class GameManager : MonoBehaviour
             new Vector2(0.5f, 0.5f), new Vector2(0f, 560f), new Vector2(800f, 120f));
         gTitle.text = "GARAGE";
         gTitle.color = new Color(1f, 0.72f, 0.12f);
+        StyleScreenTitle(gTitle, "UI/icon_menu_garage");
 
         // --- tabs
         garageTabCars = MakeButton(garagePanel.transform, "CARS", 40,
@@ -6691,6 +7047,7 @@ public partial class GameManager : MonoBehaviour
             new Vector2(0.5f, 0.5f), new Vector2(0f, 625f), new Vector2(800f, 120f));
         pTitle.text = "PAUSED";
         pTitle.color = new Color(1f, 0.72f, 0.12f);
+        StyleScreenTitle(pTitle, null);
         var qTitle = MakeText(pausePanel.transform, "QuestsTitle", 46, TextAnchor.MiddleCenter,
             new Vector2(0.5f, 0.5f), new Vector2(0f, 515f), new Vector2(700f, 70f));
         qTitle.text = "QUESTS";
@@ -6745,6 +7102,7 @@ public partial class GameManager : MonoBehaviour
             new Vector2(0.5f, 0.5f), new Vector2(0f, 720f), new Vector2(960f, 100f));
         lTitle.text = "LOGIN STREAK";
         lTitle.color = new Color(1f, 0.72f, 0.12f);
+        StyleScreenTitle(lTitle, "UI/icon_menu_login");
         loginDayText = MakeText(loginBody, "LoginDay", 46, TextAnchor.MiddleCenter,
             new Vector2(0.5f, 0.5f), new Vector2(0f, 632f), new Vector2(900f, 70f));
         loginDayText.color = new Color(1f, 0.8f, 0.3f);
@@ -6850,6 +7208,7 @@ public partial class GameManager : MonoBehaviour
             new Vector2(0.5f, 0.5f), new Vector2(0f, 550f), new Vector2(800f, 120f));
         qpTitle.text = "QUESTS";
         qpTitle.color = new Color(1f, 0.72f, 0.12f);
+        StyleScreenTitle(qpTitle, "UI/icon_menu_quests");
         // the multiplier, upright and plain; the tire count is the corner
         // counter's job, so the window does not repeat it
         questMultText = MakeText(questsPanel.transform, "QPMult", 50, TextAnchor.MiddleCenter,
@@ -6882,42 +7241,52 @@ public partial class GameManager : MonoBehaviour
         // The shop has no coin and tire lines of its own: the corner counters
         // are drawn in front of the windows, so they show here as everywhere.
         Color shopWindow = new Color(0.13f, 0.09f, 0.2f, 0.92f);
-        Transform shopScroll = MakeScrollArea(shopPanel, 2835f, -757.5f);
+        // the two boxes are big, each on its own turning burst of light, so
+        // everything under them sits ShopBoxGrow lower than it used to
+        Transform shopScroll = MakeScrollArea(shopPanel, 2835f + ShopBoxGrow, -757.5f - ShopBoxGrow * 0.5f);
         // carries on past the end of the content so it runs into the footer
-        MakeCard(shopScroll, new Vector2(0f, -802.5f), new Vector2(1010f, 2905f), shopWindow);
+        MakeCard(shopScroll, new Vector2(0f, -802.5f - ShopBoxGrow * 0.5f),
+            new Vector2(1010f, 2905f + ShopBoxGrow), shopWindow);
         var shTitle = MakeText(shopScroll, "ShopTitle", 84, TextAnchor.MiddleCenter,
             new Vector2(0.5f, 0.5f), new Vector2(0f, 575f), new Vector2(800f, 120f));
         shTitle.text = "SHOP";
         shTitle.color = new Color(1f, 0.72f, 0.12f);
+        StyleScreenTitle(shTitle, "UI/icon_menu_shop");
 
-        var boxLabel = MakeText(shopScroll, "BoxLabel", 46, TextAnchor.MiddleCenter,
-            new Vector2(0.5f, 0.5f), new Vector2(0f, 460f), new Vector2(700f, 70f));
+        // --- the mystery box: its name, with the odds beside it
+        shopStages[0] = MakeBoxStage(shopScroll, new Vector2(0f, 178f), 2f, new Color(1f, 0.78f, 0.25f));
+        var boxLabel = MakeText(shopScroll, "BoxLabel", 50, TextAnchor.MiddleCenter,
+            new Vector2(0.5f, 0.5f), new Vector2(0f, 470f), new Vector2(560f, 76f));
         boxLabel.text = "MYSTERY BOX";
+        boxLabel.color = new Color(1f, 0.84f, 0.32f);
 
-        // live view of the animated 3D toolbox
+        // live view of the animated 3D crate - the render keeps headroom over
+        // the lid for the prize, so the view is big and the name sits in that
+        // empty top part of it
         var tbGo = new GameObject("ToolboxView");
         tbGo.transform.SetParent(shopScroll, false);
         toolboxImage = tbGo.AddComponent<RawImage>();
         toolboxImage.raycastTarget = false;
         var tbRt = toolboxImage.rectTransform;
         tbRt.anchorMin = tbRt.anchorMax = tbRt.pivot = new Vector2(0.5f, 0.5f);
-        tbRt.anchoredPosition = new Vector2(0f, 285f);
-        tbRt.sizeDelta = new Vector2(290f, 290f);
+        tbRt.anchoredPosition = new Vector2(0f, 205f);
+        tbRt.sizeDelta = new Vector2(540f, 540f);
 
-        // what's inside, and how likely - beside the box, before buying it
-        MakeOddsButton(shopScroll, new Vector2(335f, 285f), new Vector2(220f, 92f),
+        // what's inside, and how likely - beside the name, before buying it
+        MakeOddsButton(shopScroll, new Vector2(398f, 470f), new Vector2(180f, 80f),
             OddsFor.MysteryBox);
 
         var boxBtnLabel = MakeButton(shopScroll, Loc.F("OPEN BOX  {0}", MysteryBoxCost), 48,
-            new Vector2(0f, 90f), new Vector2(700f, 116f), BuyMysteryBox, null, true);
+            new Vector2(0f, -110f), new Vector2(700f, 116f), BuyMysteryBox, null, true);
         IconAfterText(MakeCurrencyIcon(boxBtnLabel.transform.parent, new Vector2(0.5f, 0.5f),
             Vector2.zero, 62f, false), boxBtnLabel);
         boxResultText = MakeText(shopScroll, "BoxResult", 44, TextAnchor.MiddleCenter,
-            new Vector2(0.5f, 0.5f), new Vector2(0f, -5f), new Vector2(900f, 70f), true);
+            new Vector2(0.5f, 0.5f), new Vector2(0f, -205f), new Vector2(900f, 70f), true);
 
-        // --- blue token box
-        var tokLabel = MakeText(shopScroll, "TokenBoxLabel", 44, TextAnchor.MiddleCenter,
-            new Vector2(0.5f, 0.5f), new Vector2(0f, -95f), new Vector2(800f, 70f));
+        // --- the token box, the same way, in blue
+        shopStages[1] = MakeBoxStage(shopScroll, new Vector2(0f, -591f), -760f, new Color(0.40f, 0.72f, 1f));
+        var tokLabel = MakeText(shopScroll, "TokenBoxLabel", 50, TextAnchor.MiddleCenter,
+            new Vector2(0.5f, 0.5f), new Vector2(0f, -305f), new Vector2(560f, 76f));
         tokLabel.text = "TOKEN BOX";
         tokLabel.color = new Color(0.45f, 0.75f, 1f);
 
@@ -6927,21 +7296,24 @@ public partial class GameManager : MonoBehaviour
         tokenBoxImage.raycastTarget = false;
         var tb2Rt = tokenBoxImage.rectTransform;
         tb2Rt.anchorMin = tb2Rt.anchorMax = tb2Rt.pivot = new Vector2(0.5f, 0.5f);
-        tb2Rt.anchoredPosition = new Vector2(0f, -265f);
-        tb2Rt.sizeDelta = new Vector2(255f, 255f);
+        tb2Rt.anchoredPosition = new Vector2(0f, -565f);
+        tb2Rt.sizeDelta = new Vector2(520f, 520f);
 
-        MakeOddsButton(shopScroll, new Vector2(335f, -265f), new Vector2(220f, 92f),
+        MakeOddsButton(shopScroll, new Vector2(398f, -305f), new Vector2(180f, 80f),
             OddsFor.TokenBox);
 
         var tokBtn = MakeButton(shopScroll, Loc.F("OPEN  {0}", TokenBoxTireCost), 48,
-            new Vector2(0f, -430f), new Vector2(700f, 116f), BuyTokenBox,
+            new Vector2(0f, -870f), new Vector2(700f, 116f), BuyTokenBox,
             new Color(0.16f, 0.45f, 0.9f), true);
         IconAfterText(MakeCurrencyIcon(tokBtn.transform.parent, new Vector2(0.5f, 0.5f),
             Vector2.zero, 62f, true), tokBtn);
         tokenBoxResultText = MakeText(shopScroll, "TokenBoxResult", 44,
             TextAnchor.MiddleCenter, new Vector2(0.5f, 0.5f),
-            new Vector2(0f, -520f), new Vector2(900f, 70f), true);
+            new Vector2(0f, -960f), new Vector2(900f, 70f), true);
 
+        // everything from here down is laid out where it always was, and moved
+        // down as one once it is built
+        int shopLowerFrom = shopScroll.childCount;
         var tiresLabel = MakeText(shopScroll, "TiresLabel", 46, TextAnchor.MiddleCenter,
             new Vector2(0.5f, 0.5f), new Vector2(0f, -610f), new Vector2(700f, 70f));
         tiresLabel.text = "TIRES";
@@ -6955,9 +7327,8 @@ public partial class GameManager : MonoBehaviour
             Text label = MakeButton(shopScroll, "", 52,
                 new Vector2(x, y), new Vector2(440f, 132f), () => BuyTirePack(pack),
                 null, true);
-            // Unity's own font here: it falls back to the phone's fonts, so
-            // any currency sign the store sends (EUR, JPY, INR, KRW...) shows
-            label.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+            // the font is picked per price once the store has sent it (see
+            // RefreshPackPrices)
             packLabels[i] = label;
             // nudge text right to make room for the tire-stack icon
             label.rectTransform.anchoredPosition = new Vector2(45f, 0f);
@@ -7037,6 +7408,12 @@ public partial class GameManager : MonoBehaviour
             itemUpCoins[i] = MakeCurrencyIcon(itemUpButtons[i].transform.parent,
                 new Vector2(0.5f, 0.5f), new Vector2(-100f, 0f), 54f, false);
             itemUpButtons[i].rectTransform.anchoredPosition = new Vector2(32f, 0f);
+        }
+
+        for (int c = shopLowerFrom; c < shopScroll.childCount; c++)
+        {
+            var lowerRt = shopScroll.GetChild(c) as RectTransform;
+            if (lowerRt != null) lowerRt.anchoredPosition += new Vector2(0f, -ShopBoxGrow);
         }
 
         MakeScrollFooter(shopPanel, shopWindow, CloseShop);
@@ -7880,6 +8257,8 @@ public partial class GameManager : MonoBehaviour
         var btn = go.AddComponent<Button>();
         btn.targetGraphic = img;
         btn.onClick.AddListener(onClick);
+        // every button has the same soft gloss along the top of its face
+        MakeButtonGloss(rt);
 
         // Button labels are set a size up from the rest of the text - players
         // found them small and hard to read - and shrink only as far as it
@@ -7993,6 +8372,7 @@ public partial class GameManager : MonoBehaviour
         var btn = go.AddComponent<Button>();
         btn.targetGraphic = img;
         btn.onClick.AddListener(onClick);
+        MakeButtonGloss(rt);
 
         Texture2D icon = Resources.Load<Texture2D>(iconPath);
         if (icon != null)
@@ -8041,75 +8421,53 @@ public partial class GameManager : MonoBehaviour
     /// word in white over a dark wash so it stays readable against the black
     /// and white squares.
     /// </summary>
+    /// <summary>
+    /// RACE: racing red, with crossed chequered flags at its left end and,
+    /// under the word, a bar of how many of the races are won so far. It
+    /// glows warm behind, a beat after PLAY, and the flags wave.
+    /// (GameManager.Menu.cs moves it.)
+    /// </summary>
     Text MakeRaceButton(Transform parent, Vector2 offset, Vector2 size)
     {
-        // black frame - this is what the button tints when pressed. Not quite
-        // pure black, so its raised edge still shows against the dark flag.
-        var go = new GameObject("RACESBtn");
-        go.transform.SetParent(parent, false);
-        var frame = go.AddComponent<Image>();
-        frame.color = new Color(0.10f, 0.10f, 0.11f);
-        AddButtonDepth(frame);
-        var rt = frame.rectTransform;
-        rt.anchorMin = rt.anchorMax = rt.pivot = new Vector2(0.5f, 0.5f);
-        rt.anchoredPosition = offset;
-        rt.sizeDelta = size;
+        Text label = MakeButton(parent, "RACE", 64, offset, size, OpenRaces, RaceRed);
+        var button = (RectTransform)label.transform.parent;
+        raceGlow = MakeButtonGlow(button, new Color(1f, 0.45f, 0.25f, 0.4f));
 
-        var btn = go.AddComponent<Button>();
-        btn.targetGraphic = frame;
-        btn.onClick.AddListener(OpenRaces);
+        var lrt = label.rectTransform;
+        lrt.anchoredPosition = new Vector2(52f, 16f);
+        lrt.sizeDelta = new Vector2(size.x - 210f, 84f);
 
-        // the flag, clipped to a rounded face just inside the frame
-        var faceGo = new GameObject("Flag");
-        faceGo.transform.SetParent(go.transform, false);
-        var face = faceGo.AddComponent<Image>();
-        face.sprite = GetRoundedSprite();
-        face.type = Image.Type.Sliced;
-        face.color = Color.black;
-        face.raycastTarget = false;
-        var fRt = face.rectTransform;
-        fRt.anchorMin = Vector2.zero;
-        fRt.anchorMax = Vector2.one;
-        // inset 8 all round inside the raised face. (Everything on a button
-        // is lifted by half the lip once it is built - see ButtonDepth - so
-        // this is set that much lower here to end up level with the face.)
-        fRt.offsetMin = new Vector2(8f, 8f + ButtonLip * 0.5f);
-        fRt.offsetMax = new Vector2(-8f, -8f - ButtonLip * 0.5f);
-        faceGo.AddComponent<Mask>().showMaskGraphic = true;
+        raceFlags = MakeMenuIcon(button, "UI/icon_race_flags", new Vector2(-size.x * 0.5f + 92f, 2f), 136f).rectTransform;
 
-        // chequers, tipped a few degrees so it reads as a flag in the wind
-        const float Square = 30f;
-        var checkGo = new GameObject("Chequers");
-        checkGo.transform.SetParent(faceGo.transform, false);
-        var check = checkGo.AddComponent<RawImage>();
-        check.texture = GetCheckerTexture();
-        check.raycastTarget = false;
-        Vector2 cover = new Vector2(size.x + 160f, size.y + 260f);
-        check.uvRect = new Rect(0f, 0f, cover.x / (Square * 2f), cover.y / (Square * 2f));
-        var cRt = check.rectTransform;
-        cRt.anchorMin = cRt.anchorMax = cRt.pivot = new Vector2(0.5f, 0.5f);
-        cRt.anchoredPosition = Vector2.zero;
-        cRt.sizeDelta = cover;
-        cRt.localRotation = Quaternion.Euler(0f, 0f, -7f);
-
-        // the dark wash over the whole flag - the chequers show through it
-        // evenly, and the white word (with its black outline) stands out
-        // anywhere on it
-        var bandGo = new GameObject("Shade");
-        bandGo.transform.SetParent(faceGo.transform, false);
-        var band = bandGo.AddComponent<Image>();
-        band.color = new Color(0f, 0f, 0f, 0.80f);
-        band.raycastTarget = false;
-        var bRt = band.rectTransform;
-        bRt.anchorMin = Vector2.zero;
-        bRt.anchorMax = Vector2.one;
-        bRt.offsetMin = bRt.offsetMax = Vector2.zero;
-
-        var label = MakeText(faceGo.transform, "Label", 64, TextAnchor.MiddleCenter,
-            new Vector2(0.5f, 0.5f), Vector2.zero, size);
-        label.text = "RACE";
-        label.color = Color.white;
+        // races won: a little gold bar and the count beside it
+        var track = MakeCard(button, new Vector2(18f, -36f), new Vector2(230f, 20f), new Color(0f, 0f, 0f, 0.38f));
+        raceBarFill = MakeCard(track.transform, Vector2.zero, new Vector2(230f, 20f), new Color(1f, 0.82f, 0.25f));
+        var fr = raceBarFill.rectTransform;
+        fr.anchorMin = fr.anchorMax = fr.pivot = new Vector2(0f, 0.5f);
+        fr.anchoredPosition = Vector2.zero;
+        raceCountText = MakeText(button, "RaceCount", 34, TextAnchor.MiddleLeft,
+            new Vector2(0.5f, 0.5f), new Vector2(205f, -36f), new Vector2(120f, 44f), true);
+        raceCountText.color = new Color(1f, 0.9f, 0.55f);
+        RefreshRaceButton();
         return label;
+    }
+
+    static readonly Color RaceRed = new Color(0.86f, 0.15f, 0.20f);
+    Image raceGlow, raceBarFill;
+    RectTransform raceFlags;
+    Text raceCountText;
+
+    /// <summary>Brings the RACE button's count of races won up to date.</summary>
+    void RefreshRaceButton()
+    {
+        if (raceCountText == null) return;
+        int won = 0;
+        for (int i = 0; i < RaceMode.TotalLevels; i++) if (RaceMode.IsCompleted(i)) won++;
+        raceCountText.text = won + "/" + RaceMode.TotalLevels;
+        float k = won / (float)RaceMode.TotalLevels;
+        // never quite empty, so the bar reads as a bar
+        raceBarFill.rectTransform.sizeDelta = new Vector2(Mathf.Max(20f, 230f * k), 20f);
+        raceBarFill.color = won > 0 ? new Color(1f, 0.82f, 0.25f) : new Color(1f, 1f, 1f, 0.18f);
     }
 
     /// <summary>
@@ -8216,6 +8574,69 @@ public partial class GameManager : MonoBehaviour
         unlockPanel.SetActive(false);
     }
 
+    /// <summary>
+    /// The small-text font, Lilita One: fun and chunky like the rest of the
+    /// game, but easy to read small. (Resources/Fonts/SmallFont.)
+    /// </summary>
+    static Font SmallFont
+    {
+        get
+        {
+            if (!smallFontSearched)
+            {
+                smallFontSearched = true;
+                smallFont = Resources.Load<Font>("Fonts/SmallFont");
+            }
+            return smallFont;
+        }
+    }
+    static Font smallFont;
+    static bool smallFontSearched;
+
+    /// <summary>Text asked for below this size is set in the small-text font.</summary>
+    const int SmallTextBelow = 64;
+
+    /// <summary>
+    /// The small-text font is far narrower than the racing font (its capitals
+    /// are the same height at the same size), so text that has moved over
+    /// from the racing font is set a good deal larger to read as big.
+    /// </summary>
+    const float SmallFontLift = 1.35f;
+
+    /// <summary>
+    /// Plain text in the small-text font: a little larger than the old plain
+    /// font was - it is still narrower than that was, so it fits the same room.
+    /// </summary>
+    const float SmallPlainLift = 1.32f;
+
+    /// <summary>Nothing in the small-text font is set smaller than this.</summary>
+    const int SmallTextFloor = 26;
+
+    /// <summary>
+    /// A size for a &lt;size&gt; tag inside a label. Sizes in tags are fixed
+    /// pixels, so they did not grow with the small-text font: they are
+    /// scaled up here by <paramref name="lift"/> when the label is set in it,
+    /// and kept off the floor.
+    /// </summary>
+    static int RichSize(int px, Text label, float lift)
+    {
+        bool small = label != null && label.font == SmallFont;
+        return small ? Mathf.Max(SmallTextFloor, Mathf.RoundToInt(px * lift)) : px;
+    }
+
+    /// <summary>
+    /// The size MakeText sets a label to. The plain text is set a little
+    /// larger to hold its own against the display font around it, and so is
+    /// small text that has moved over from the racing font.
+    /// </summary>
+    static int TextSize(int size, bool plainFont, Font font)
+    {
+        bool small = font != null && font == SmallFont;
+        float lift = small ? (plainFont ? SmallPlainLift : SmallFontLift) : plainFont ? 1.2f : 1f;
+        int px = Mathf.RoundToInt(size * FontScale * lift * Loc.SizeScale(Loc.Current));
+        return small ? Mathf.Max(SmallTextFloor, px) : px;
+    }
+
     Text MakeText(Transform parent, string name, int size, TextAnchor anchor,
         Vector2 anchorPoint, Vector2 offset, Vector2 sizeDelta, bool plainFont = false)
     {
@@ -8226,18 +8647,19 @@ public partial class GameManager : MonoBehaviour
         var text = go.AddComponent<LocText>();
         // languages the game font cannot write bring their own font
         Font langFont = plainFont ? Loc.PlainFontFor(Loc.Current) : Loc.DisplayFontFor(Loc.Current);
+        // In the game's own lettering, the racing font is kept for titles and
+        // big buttons: it is so wide that small words in it are hard to read,
+        // so they - and the plain text - are set in the small-text font.
+        bool small = langFont == null && SmallFont != null && (plainFont || size < SmallTextBelow);
         text.font = langFont != null ? langFont
+                  : small ? SmallFont
                   : plainFont ? Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf")
                   : uiFont;
-        // The plain font is used where legibility matters most - small,
-        // number-heavy labels - so it is set a little larger and bold to hold
-        // its own against the display font around it.
-        text.fontSize = Mathf.RoundToInt(size * FontScale * (plainFont ? 1.2f : 1f)
-                                         * Loc.SizeScale(Loc.Current));
+        text.fontSize = TextSize(size, plainFont, text.font);
         // custom racing fonts are usually already slanted; the fallback font
-        // gets bold+italic to fake the same look. The language fonts are
-        // already bold, so they are left as drawn.
-        text.fontStyle = langFont != null ? FontStyle.Normal
+        // gets bold+italic to fake the same look. The language fonts and the
+        // small-text font are already bold, so they are left as drawn.
+        text.fontStyle = langFont != null || small ? FontStyle.Normal
                        : plainFont ? FontStyle.Bold
                        : usingCustomFont ? FontStyle.Bold : FontStyle.BoldAndItalic;
         text.alignment = anchor;

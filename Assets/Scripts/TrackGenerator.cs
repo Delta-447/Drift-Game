@@ -431,6 +431,7 @@ public class TrackGenerator : MonoBehaviour
         nextPowerUpDistance = Mathf.Max(nextPowerUpDistance, dist + 60f);
         nextTrafficDistance = Mathf.Max(nextTrafficDistance, dist + 40f);
         nextTireDistance = Mathf.Max(nextTireDistance, dist + 200f);
+        nextBoxDistance = Mathf.Max(nextBoxDistance, dist + 250f);
     }
 
     [Header("Coins")]
@@ -517,8 +518,12 @@ public class TrackGenerator : MonoBehaviour
 
     readonly List<TirePickupData> tirePickups = new List<TirePickupData>();
     float nextTireDistance;
-    GameObject tirePrefab;
-    bool tirePrefabSearched;
+
+    [Header("Mystery box pickups (rarer still; they come with the tyres)")]
+    public float boxSpacingMin = 1800f;
+    public float boxSpacingMax = 3200f;
+    readonly List<TirePickupData> boxPickups = new List<TirePickupData>();
+    float nextBoxDistance;
 
     [Header("Clouds")]
     public bool spawnClouds = true;
@@ -728,6 +733,7 @@ public class TrackGenerator : MonoBehaviour
         nextTrafficDistance = roadBehindStart + trafficStartAt;
         nextPowerUpDistance = roadBehindStart + powerUpStartAt;
         nextTireDistance = roadBehindStart + Random.Range(tireSpacingMin, tireSpacingMax) * 0.5f;
+        nextBoxDistance = roadBehindStart + Random.Range(boxSpacingMin, boxSpacingMax) * 0.45f;
         nextBoostDistance = roadBehindStart + 120f;
         boostPads.Clear();
         postFlip = 0;
@@ -771,6 +777,7 @@ public class TrackGenerator : MonoBehaviour
         traffic.Clear();
         powerUps.Clear();
         tirePickups.Clear();
+        boxPickups.Clear();
         currentChunk = null;
         ground = null;
     }
@@ -1231,6 +1238,11 @@ public class TrackGenerator : MonoBehaviour
                 SpawnTirePickup(nextTireDistance);
                 nextTireDistance += Random.Range(tireSpacingMin, tireSpacingMax);
             }
+            while (nextBoxDistance <= dist)
+            {
+                SpawnBoxPickup(nextBoxDistance);
+                nextBoxDistance += Random.Range(boxSpacingMin, boxSpacingMax);
+            }
         }
 
         // coin runs spawn once their whole length has road under it
@@ -1403,6 +1415,7 @@ public class TrackGenerator : MonoBehaviour
         root.AddComponent<Coin>().spinSpeed = 140f;
 
         BuildPowerUpShape(root.transform, root.transform.position, type);
+        PickupGlow.Add(root.transform, PickupGlow.Tier.Item, powerUpMats[(int)type].color);
 
         powerUps.Add(new PowerUpData { distance = dist, lateral = lat, type = type, go = root });
     }
@@ -1746,61 +1759,63 @@ public class TrackGenerator : MonoBehaviour
         float lat = Random.Range(-(roadWidth * 0.5f - 2f), roadWidth * 0.5f - 2f);
         if (ObstacleNear(dist, lat)) return;
 
-        if (!tirePrefabSearched)
-        {
-            tirePrefabSearched = true;
-            tirePrefab = Resources.Load<GameObject>("Tire/tire");
-        }
-
         var root = new GameObject("TirePickup");
         root.transform.SetParent(transform, false);
-        root.transform.position = pos + right * lat + Vector3.up * 1.1f;
+        root.transform.position = pos + right * lat + Vector3.up * 1.2f;
         root.AddComponent<Coin>().spinSpeed = 120f;
-
-        if (tirePrefab != null)
-        {
-            GameObject model = Instantiate(tirePrefab, root.transform);
-            model.transform.localPosition = Vector3.zero;
-            var rends = model.GetComponentsInChildren<Renderer>();
-            if (rends.Length > 0)
-            {
-                Bounds b = rends[0].bounds;
-                for (int i = 1; i < rends.Length; i++) b.Encapsulate(rends[i].bounds);
-                float maxDim = Mathf.Max(b.size.x, b.size.y, b.size.z, 0.001f);
-                Vector3 sc = model.transform.localScale * (1.1f / maxDim);
-
-                // Fatten the tyre along its axle. Scaled evenly it reads as a
-                // disc on edge from the driver's view; a chunkier one looks
-                // like something worth picking up.
-                if (b.size.x <= b.size.y && b.size.x <= b.size.z) sc.x *= 1.7f;
-                else if (b.size.y <= b.size.x && b.size.y <= b.size.z) sc.y *= 1.7f;
-                else sc.z *= 1.7f;
-                model.transform.localScale = sc;
-
-                // stand upright: thinnest axis across the road
-                if (b.size.y <= b.size.x && b.size.y <= b.size.z)
-                    model.transform.localRotation = model.transform.localRotation * Quaternion.Euler(0f, 0f, 90f);
-                else if (b.size.z <= b.size.x && b.size.z <= b.size.y)
-                    model.transform.localRotation = model.transform.localRotation * Quaternion.Euler(0f, 90f, 0f);
-
-                // Centre it LAST. Scaling and turning both shift the mesh off
-                // the pivot, and the pickup spins about that pivot - so an
-                // off-centre model swings from side to side as it turns.
-                b = rends[0].bounds;
-                for (int i = 1; i < rends.Length; i++) b.Encapsulate(rends[i].bounds);
-                model.transform.position += root.transform.position - b.center;
-                foreach (var r in rends) r.sharedMaterial = oilMat; // near-black rubber
-            }
-        }
-        else
-        {
-            // fallback: dark torus-ish ring from a squashed cylinder
-            MakePart(PrimitiveType.Cylinder, root.transform, oilMat,
-                root.transform.position, Quaternion.Euler(90f, 0f, 0f),
-                new Vector3(1.0f, 0.18f, 1.0f));
-        }
+        // the same tyre as the tire icon (TireModel), standing on its tread
+        // with its axle across the road
+        TireModel.Create(root.transform, root.transform.position, 1.15f);
+        PickupGlow.Add(root.transform, PickupGlow.Tier.Tire);
 
         tirePickups.Add(new TirePickupData { distance = dist, lateral = lat, go = root });
+    }
+
+    /// <summary>
+    /// A mystery box floating over the road - the shop's crate, knocking and
+    /// glowing, on the strongest light any pickup gets.
+    /// </summary>
+    void SpawnBoxPickup(float dist)
+    {
+        SamplePose(dist, out Vector3 pos, out Vector3 fwd, out _);
+        Vector3 right = Vector3.Cross(Vector3.up, fwd).normalized;
+        float maxLat = roadWidth * 0.5f - 2.2f;
+        // a box is rare: try a few spots before giving one up
+        float lat = 0f;
+        bool clear = false;
+        for (int attempt = 0; attempt < 4 && !clear; attempt++)
+        {
+            lat = Random.Range(-maxLat, maxLat);
+            clear = !ObstacleNear(dist, lat);
+        }
+        if (!clear) return;
+
+        var root = new GameObject("BoxPickup");
+        root.transform.SetParent(transform, false);
+        root.transform.position = pos + right * lat + Vector3.up * 1.2f;
+        root.AddComponent<Coin>().spinSpeed = 70f;
+        PrizeChest.Rig rig = PrizeChest.Build(PrizeChest.Style.Crate, root.transform,
+            root.transform.position + Vector3.down * 0.62f);
+        rig.root.AddComponent<ToolboxAnimator>().UseRig(rig);
+        PickupGlow.Add(root.transform, PickupGlow.Tier.Box).OwnMaterials(rig.root);
+
+        boxPickups.Add(new TirePickupData { distance = dist, lateral = lat, go = root });
+    }
+
+    public bool TryCollectBox(float dist, float lateral, float carRadius)
+    {
+        float range = carRadius + 1.2f;
+        for (int i = 0; i < boxPickups.Count; i++)
+        {
+            TirePickupData t = boxPickups[i];
+            if (Mathf.Abs(t.distance - dist) < range && Mathf.Abs(t.lateral - lateral) < range)
+            {
+                if (t.go != null) Object.Destroy(t.go);
+                boxPickups.RemoveAt(i);
+                return true;
+            }
+        }
+        return false;
     }
 
     public bool TryCollectTire(float dist, float lateral, float carRadius)
@@ -1860,6 +1875,7 @@ public class TrackGenerator : MonoBehaviour
         root.transform.position = pos + right * lat + Vector3.up * 1.2f;
         root.AddComponent<Coin>().spinSpeed = 140f;
         BuildPowerUpShape(root.transform, root.transform.position, type);
+        PickupGlow.Add(root.transform, PickupGlow.Tier.Item, powerUpMats[(int)type].color);
         powerUps.Add(new PowerUpData { distance = dist, lateral = lat, type = type, go = root });
         return true;
     }
@@ -3721,6 +3737,14 @@ public class TrackGenerator : MonoBehaviour
             {
                 if (tirePickups[i].go != null) Object.Destroy(tirePickups[i].go);
                 tirePickups.RemoveAt(i);
+            }
+        }
+        for (int i = boxPickups.Count - 1; i >= 0; i--)
+        {
+            if (boxPickups[i].distance < carDistance - 25f)
+            {
+                if (boxPickups[i].go != null) Object.Destroy(boxPickups[i].go);
+                boxPickups.RemoveAt(i);
             }
         }
     }

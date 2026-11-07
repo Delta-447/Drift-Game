@@ -57,6 +57,13 @@ public class IapStore : MonoBehaviour
     /// <summary>Raised when the store's prices arrive, so the shop can show them.</summary>
     public static event Action PricesChanged;
 
+    /// <summary>
+    /// Raised when a purchase is over: true once it is paid for and handed
+    /// out, false if it was cancelled, declined or failed, or is waiting on a
+    /// parent's approval (Ask to Buy). The shop freezes until then.
+    /// </summary>
+    public static event Action<bool> PurchaseEnded;
+
     /// <summary>True once the store has answered with the products.</summary>
     public static bool Ready { get { return instance != null && instance.products.Count > 0; } }
 
@@ -149,6 +156,7 @@ public class IapStore : MonoBehaviour
             if (grantHandler != null)
             {
                 grantHandler(productId);
+                if (PurchaseEnded != null) PurchaseEnded(true);
                 return true;
             }
 #endif
@@ -170,6 +178,7 @@ public class IapStore : MonoBehaviour
             store.OnPurchasePending += OnPurchasePending;
             store.OnPurchaseConfirmed += OnPurchaseConfirmed;
             store.OnPurchaseFailed += OnPurchaseFailed;
+            store.OnPurchaseDeferred += OnPurchaseDeferred;
             store.OnPurchasesFetched += OnPurchasesFetched;
             store.OnPurchasesFetchFailed += OnPurchasesFetchFailed;
             store.OnStoreConnected += OnStoreConnected;
@@ -294,6 +303,7 @@ public class IapStore : MonoBehaviour
         }
         // only once the tires are in the save is the store told it is done
         store.ConfirmPurchase(order);
+        if (PurchaseEnded != null) PurchaseEnded(true);
     }
 
     void OnPurchaseConfirmed(Order order) { }
@@ -303,6 +313,15 @@ public class IapStore : MonoBehaviour
         // cancelled, declined or failed - nothing was charged, nothing to do
         lastProblem = "purchase did not go through - " + order;
         Debug.Log("IapStore: purchase did not go through - " + order);
+        if (PurchaseEnded != null) PurchaseEnded(false);
+    }
+
+    void OnPurchaseDeferred(DeferredOrder order)
+    {
+        // Ask to Buy: it goes through later, if a parent says yes, and is
+        // handed out then (OnPurchasePending)
+        Debug.Log("IapStore: purchase waiting for approval - " + order);
+        if (PurchaseEnded != null) PurchaseEnded(false);
     }
 
     void OnPurchasesFetched(Orders orders) { }
